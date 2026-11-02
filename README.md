@@ -17,6 +17,38 @@ An independent reproduction and experimental extension of PARD-SSM, evaluating p
 
 ---
 
+## Highlights
+
+| | CICIDS2017 | UNSW-NB15 |
+| :-- | --: | --: |
+| Hybrid SSSM + RF, F1 | 0.9607 | 0.9438 |
+| Hybrid SSSM + RF, ROC-AUC | 0.9981 | 0.9996 |
+| Detection lead time (steps) | 28.32 ± 14.26 | 31.24 ± 13.52 |
+| Best baseline F1 (Isolation Forest) | 0.4446 | 0.3004 |
+
+- The SSSM is the only configuration in the ablation that provides early-detection lead time.
+- It does not improve every classification metric on every dataset (see [Section 7](#7-ablation-study)).
+- Evaluation uses a random 80/20 split of 50,000-sample subsets, not a chronological holdout (see [Section 4](#4-datasets)).
+
+## Quick Start
+
+```powershell
+git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models.git
+cd PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models
+python -m venv .venv; .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Then prepare the datasets ([`docs/dataset_guide.md`](docs/dataset_guide.md)) and run:
+
+```powershell
+python -m src.models.switching_ssm --data data/processed/cicids2017_features.npy --labels data/processed/cicids2017_labels.npy --dataset-name CICIDS2017 --no-shap
+```
+
+See [Section 10](#10-running-experiments) for all experiments.
+
+---
+
 ## Table of Contents
 
 1. [Overview](#1-overview)
@@ -153,67 +185,6 @@ Processed datasets were verified to contain only finite numerical values before 
 
 Results are from the held-out 80/20 evaluation on the prepared 50,000-sample datasets, using a decision threshold of 0.5.
 
-### Architecture
-
-The system follows a hybrid probabilistic and machine-learning architecture. The Switching State-Space Model (SSSM) captures temporal changes in network behaviour and infers latent attack regimes. A Random Forest (RF) classifier then uses the configured traffic features and regime-derived signals to perform attack detection.
-
-#### System Architecture
-
-```mermaid
-flowchart TD
-    A["Network Traffic Datasets<br/>CICIDS2017 / UNSW-NB15"] --> B["Dataset Loading & Feature Selection"]
-    B --> C["Preprocessing & Normalization"]
-    C --> D["PCA & Sequential Observation Windows"]
-    D --> E["Switching State-Space Model"]
-
-    E --> F["Latent State Estimation"]
-    E --> G["Probabilistic Regime Inference"]
-
-    F --> H["Temporal / Regime-Derived Features"]
-    G --> H
-
-    C --> I["Selected Traffic Features"]
-    H --> J["Hybrid Feature Construction"]
-    I --> J
-
-    J --> K["Random Forest Classifier"]
-    K --> L["Attack Probability"]
-    L --> M["Decision Threshold"]
-    M --> N["Benign / Attack Prediction"]
-
-    E --> O["Early Detection Analysis"]
-    N --> P["Performance Evaluation"]
-    O --> P
-
-    P --> Q["Precision, Recall, F1, ROC-AUC, PR-AUC"]
-    P --> R["Detection Lead Time & Experimental Results"]
-```
-
-#### Core Components
-
-| Component                   | Description                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| Dataset Loading             | Loads CICIDS2017 and UNSW-NB15 traffic datasets and selects relevant features.            |
-| Preprocessing               | Handles data cleaning, normalization, and feature preparation.                            |
-| PCA & Sequential Windows    | Reduces feature dimensionality and prepares sequential observations.                      |
-| Switching SSM               | Models hidden system dynamics and changing network attack regimes.                        |
-| Regime Inference            | Estimates probabilistic latent regimes from sequential traffic observations.              |
-| Hybrid Feature Construction | Combines configured traffic features with signals derived from the SSSM.                  |
-| Random Forest               | Performs final binary attack classification.                                              |
-| Evaluation                  | Measures detection performance, baseline comparisons, ablations, and detection lead time. |
-
-#### Evaluation Outputs
-
-The architecture supports two complementary evaluation tasks:
-
-1. **Regime Inference:** Evaluates how effectively the Switching SSM identifies latent network behaviour.
-2. **Attack Detection:** Evaluates the hybrid SSSM + Random Forest pipeline in distinguishing malicious traffic from benign traffic.
-
-These are separate tasks, so standalone SSSM regime accuracy should not be confused with the hybrid model's attack-detection accuracy.
-
-
-## 5. Main Experimental Results
-
 | Metric | CICIDS2017 | UNSW-NB15 |
 | :----- | ---------: | --------: |
 | Accuracy | 98.41% | 99.75% |
@@ -231,7 +202,7 @@ These are separate tasks, so standalone SSSM regime accuracy should not be confu
 | CICIDS2017 | 79.81% |
 | UNSW-NB15 | 95.23% |
 
-These figures measure regime inference and are not comparable to the hybrid attack-detection metrics above.
+These measure regime inference, not attack detection, and are not comparable to the metrics above.
 
 ## 6. Baseline Comparison
 
@@ -268,8 +239,8 @@ Results use the current baseline configuration, including 10-epoch LSTM training
 **Caveats**
 
 - The UNSW-NB15 HMM run produced a likelihood non-convergence warning.
-- LSTM results are specific to the 10-epoch configuration and should not be treated as a general benchmark.
-- Baseline-table values come from the baseline script and may differ slightly from Section 5, which reports the main model run.
+- LSTM results are specific to the 10-epoch configuration, not a general benchmark.
+- Values here and in Section 7 come from separate script runs, so they may differ slightly from Section 5.
 
 ## 7. Ablation Study
 
@@ -349,7 +320,7 @@ Raw datasets, processed arrays, temporary outputs, and model checkpoints are exc
 **1. Clone the repository**
 
 ```powershell
-git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection.git
+git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models.git
 cd PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models
 ```
 
@@ -418,13 +389,10 @@ python -m pytest -q
 
 ## 11. Limitations
 
-- Results are based on 50,000-sample processed subsets and the current experiment configurations.
-- Random sampling before splitting means the evaluation is not a strict chronological holdout.
-- The processed UNSW-NB15 labels are binary.
-- The UNSW-NB15 HMM baseline did not converge.
-- LSTM performance depends on training duration, preprocessing, threshold, and split configuration.
-- Detection lead time is measured in sequence steps, not seconds.
-- Strong benchmark performance does not establish production readiness; evaluation on independent chronological traffic and live network streams is still required.
+- **Data:** 50,000-sample subsets, randomly sampled before the split, so no chronological holdout; UNSW-NB15 labels are binary ([Section 4](#4-datasets)).
+- **Baselines:** The UNSW-NB15 HMM did not converge, and LSTM results depend on the 10-epoch configuration ([Section 6](#6-baseline-comparison)).
+- **Metrics:** Detection lead time is in sequence steps, not seconds.
+- **Deployment:** Strong benchmark results do not establish production readiness. Independent chronological traffic and live network streams are still needed.
 
 ## 12. Attribution
 
