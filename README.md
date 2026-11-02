@@ -32,16 +32,17 @@ An independent reproduction and experimental extension of PARD-SSM, evaluating p
 
 ## Quick Start
 
-```powershell
+```bash
 git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models.git
 cd PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models
-python -m venv .venv; .venv\Scripts\Activate.ps1
+python -m venv .venv
+source .venv/bin/activate        # Windows (PowerShell): .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
 Then prepare the datasets ([`docs/dataset_guide.md`](docs/dataset_guide.md)) and run:
 
-```powershell
+```bash
 python -m src.models.switching_ssm --data data/processed/cicids2017_features.npy --labels data/processed/cicids2017_labels.npy --dataset-name CICIDS2017 --no-shap
 ```
 
@@ -146,20 +147,7 @@ flowchart TD
     P --> R["Detection Lead Time"]
 ```
 
-### 3.3 Core Components
-
-| Component | Description |
-| :-------- | :---------- |
-| Dataset Loading | Loads CICIDS2017 and UNSW-NB15 traffic data and selects relevant features. |
-| Preprocessing | Data cleaning, normalization, and feature preparation. |
-| PCA & Sequential Windows | Dimensionality reduction and construction of sequential observations. |
-| Switching SSM | Models hidden dynamics and changing attack regimes. |
-| Regime Inference | Estimates probabilistic latent regimes from sequential observations. |
-| Hybrid Feature Construction | Combines traffic features with SSSM-derived signals. |
-| Random Forest | Final binary attack classification. |
-| Evaluation | Detection metrics, baselines, ablations, and lead time. |
-
-### 3.4 Evaluation Tasks
+### 3.3 Evaluation Tasks
 
 The architecture supports two distinct tasks:
 
@@ -317,26 +305,7 @@ Raw datasets, processed arrays, temporary outputs, and model checkpoints are exc
 
 ## 9. Installation
 
-**1. Clone the repository**
-
-```powershell
-git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models.git
-cd PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models
-```
-
-**2. Create a virtual environment**
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**3. Install dependencies**
-
-```powershell
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
+Requires **Python 3.10+**. Follow the [Quick Start](#quick-start) to clone, create a virtual environment, and install `requirements.txt`. To upgrade pip first, run `python -m pip install --upgrade pip`.
 
 ## 10. Running Experiments
 
@@ -353,7 +322,7 @@ data/processed/unswnb15_labels.npy
 
 ### 10.2 Main Switching SSM experiments
 
-```powershell
+```bash
 python -m src.models.switching_ssm --data data/processed/cicids2017_features.npy --labels data/processed/cicids2017_labels.npy --dataset-name CICIDS2017 --no-shap
 
 python -m src.models.switching_ssm --data data/processed/unswnb15_features.npy --labels data/processed/unswnb15_labels.npy --dataset-name UNSW-NB15 --no-shap
@@ -361,21 +330,21 @@ python -m src.models.switching_ssm --data data/processed/unswnb15_features.npy -
 
 ### 10.3 Baselines
 
-```powershell
+```bash
 python experiments/baselines.py --dataset cicids2017 --lstm-epochs 10
 python experiments/baselines.py --dataset unswnb15 --lstm-epochs 10
 ```
 
 ### 10.4 Ablations
 
-```powershell
+```bash
 python experiments/ablation_study.py --dataset cicids2017
 python experiments/ablation_study.py --dataset unswnb15
 ```
 
 ### 10.5 Statistical significance
 
-```powershell
+```bash
 python experiments/statistical_significance.py --help
 ```
 
@@ -383,7 +352,7 @@ Use the available options to select the dataset and experiment configuration.
 
 ### 10.6 Tests
 
-```powershell
+```bash
 python -m pytest -q
 ```
 
