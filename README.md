@@ -153,6 +153,67 @@ Processed datasets were verified to contain only finite numerical values before 
 
 Results are from the held-out 80/20 evaluation on the prepared 50,000-sample datasets, using a decision threshold of 0.5.
 
+### Architecture
+
+The system follows a hybrid probabilistic and machine-learning architecture. The Switching State-Space Model (SSSM) captures temporal changes in network behaviour and infers latent attack regimes. A Random Forest (RF) classifier then uses the configured traffic features and regime-derived signals to perform attack detection.
+
+#### System Architecture
+
+```mermaid
+flowchart TD
+    A["Network Traffic Datasets<br/>CICIDS2017 / UNSW-NB15"] --> B["Dataset Loading & Feature Selection"]
+    B --> C["Preprocessing & Normalization"]
+    C --> D["PCA & Sequential Observation Windows"]
+    D --> E["Switching State-Space Model"]
+
+    E --> F["Latent State Estimation"]
+    E --> G["Probabilistic Regime Inference"]
+
+    F --> H["Temporal / Regime-Derived Features"]
+    G --> H
+
+    C --> I["Selected Traffic Features"]
+    H --> J["Hybrid Feature Construction"]
+    I --> J
+
+    J --> K["Random Forest Classifier"]
+    K --> L["Attack Probability"]
+    L --> M["Decision Threshold"]
+    M --> N["Benign / Attack Prediction"]
+
+    E --> O["Early Detection Analysis"]
+    N --> P["Performance Evaluation"]
+    O --> P
+
+    P --> Q["Precision, Recall, F1, ROC-AUC, PR-AUC"]
+    P --> R["Detection Lead Time & Experimental Results"]
+```
+
+#### Core Components
+
+| Component                   | Description                                                                               |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| Dataset Loading             | Loads CICIDS2017 and UNSW-NB15 traffic datasets and selects relevant features.            |
+| Preprocessing               | Handles data cleaning, normalization, and feature preparation.                            |
+| PCA & Sequential Windows    | Reduces feature dimensionality and prepares sequential observations.                      |
+| Switching SSM               | Models hidden system dynamics and changing network attack regimes.                        |
+| Regime Inference            | Estimates probabilistic latent regimes from sequential traffic observations.              |
+| Hybrid Feature Construction | Combines configured traffic features with signals derived from the SSSM.                  |
+| Random Forest               | Performs final binary attack classification.                                              |
+| Evaluation                  | Measures detection performance, baseline comparisons, ablations, and detection lead time. |
+
+#### Evaluation Outputs
+
+The architecture supports two complementary evaluation tasks:
+
+1. **Regime Inference:** Evaluates how effectively the Switching SSM identifies latent network behaviour.
+2. **Attack Detection:** Evaluates the hybrid SSSM + Random Forest pipeline in distinguishing malicious traffic from benign traffic.
+
+These are separate tasks, so standalone SSSM regime accuracy should not be confused with the hybrid model's attack-detection accuracy.
+
+
+## 5. Main Experimental Results
+
 | Metric | CICIDS2017 | UNSW-NB15 |
 | :----- | ---------: | --------: |
 | Accuracy | 98.41% | 99.75% |
@@ -288,7 +349,7 @@ Raw datasets, processed arrays, temporary outputs, and model checkpoints are exc
 **1. Clone the repository**
 
 ```powershell
-git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models.git
+git clone https://github.com/PeerAhammad/PARD-SSM-Probabilistic-Attack-Regime-Detection.git
 cd PARD-SSM-Probabilistic-Attack-Regime-Detection-using-Switching-State-Space-Models
 ```
 
