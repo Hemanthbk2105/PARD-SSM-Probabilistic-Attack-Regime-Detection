@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.preprocessing import RobustScaler
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -194,10 +194,10 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         regime_probs, hidden_states = regime_probs[:length], hidden_states[:length]
         predicted_observations = predicted_observations[:length]
         observed = test_obs[:length]
-        accuracy = float(accuracy_score(actual, predicted))
-        labels = sorted(int(v) for v in np.unique(np.concatenate([actual, predicted])))
-        matrix = confusion_matrix(actual, predicted, labels=labels)
-        report = classification_report(actual, predicted, labels=labels, output_dict=True, zero_division=0)
+        # Latent state IDs are arbitrary and do not map directly to dataset class IDs.
+        # ARI and NMI compare clusterings without assuming a particular ID alignment.
+        ari = float(adjusted_rand_score(actual, predicted))
+        nmi = float(normalized_mutual_info_score(actual, predicted))
         attack_ids = [i for i in range(regimes) if i != 0]
         attack_ids = [i for i in attack_ids if i < regime_probs.shape[1]]
         attack_probability = regime_probs[:, attack_ids].sum(axis=1) if attack_ids else 1 - regime_probs[:, 0]
@@ -215,13 +215,13 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "obs_dim": int(components),
             "window_size": int(window_size),
             "em_iterations": int(em_iterations),
-            "accuracy": accuracy,
+            "adjusted_rand_index": ari,
+            "normalized_mutual_info": nmi,
             "prediction_mse": float(np.mean((observed - predicted_observations) ** 2)),
             "log_likelihood": float(np.mean(ll_values)),
-            "regime_labels": labels,
-            "regime_names": {str(i): REGIME_NAMES.get(i, f"Regime {i}") for i in labels},
-            "confusion_matrix": matrix.tolist(),
-            "classification_report": report,
+            "ground_truth_classes": sorted(int(v) for v in np.unique(actual)),
+            "latent_regime_ids": sorted(int(v) for v in np.unique(predicted)),
+            "regime_names": {str(i): REGIME_NAMES.get(i, f"Latent regime {i}") for i in range(regimes)},
             "regime_probabilities": regime_probs[::max(1, length // 500)].tolist(),
             "predicted_regimes": predicted[::max(1, length // 500)].tolist(),
             "true_regimes": actual[::max(1, length // 500)].tolist(),
@@ -229,7 +229,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "hidden_state": hidden_states[::max(1, length // 500), :min(3, hidden_states.shape[1])].tolist(),
             "training_log_likelihood": [float(v) for v in history],
             "regime_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
-            "evaluation_note": "This run follows the repository's dataset loader and temporal split. Because the loader randomly samples rows before the split, it must not be described as a strict chronological evaluation. Regime IDs are latent states and are not guaranteed to match semantic attack labels one-to-one.",
+            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The model is fitted on the first complete training window only; results should be treated as an exploratory baseline, not a validated production detector.",
         }
         latest_result(name).write_text(json.dumps(result_payload, default=safe_json, indent=2), encoding="utf-8")
         return {"message": "Experiment completed.", "result": result_payload}
