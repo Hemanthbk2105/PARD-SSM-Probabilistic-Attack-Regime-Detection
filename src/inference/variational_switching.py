@@ -52,6 +52,7 @@ class SwitchingSSMResult:
     log_likelihood: float
     predicted_observations: np.ndarray  # (T, obs_dim) — y_{t|t-1}
     regime_filtered_means: np.ndarray   # (T, K, state_dim) — per-regime filtered states
+    pairwise_transition_probs: np.ndarray  # (T, K, K) — approximate P(s[t-1], s[t] | y[1:t])
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ class SwitchingSSM:
         filtered_covs = np.zeros((T, d, d))
         predicted_obs = np.zeros((T, obs_dim))
         regime_filtered_means = np.zeros((T, K, d))
+        pairwise_transition_probs = np.zeros((T, K, K))
         total_log_lik = 0.0
 
         # --- Initialize ---
@@ -229,6 +231,17 @@ class SwitchingSSM:
             log_joint = log_liks + np.log(pred_regime_prob + 1e-300)
             log_norm = logsumexp(log_joint)
             regime_prob = np.exp(log_joint - log_norm)
+            if t > 0:
+                # Approximate pairwise posterior using the previous filtered
+                # regime probabilities, transition prior, and current emission.
+                log_xi = (
+                    np.log(regime_prob_previous[:, None] + 1e-300)
+                    + np.log(self.transition_matrix + 1e-300)
+                    + log_liks[None, :]
+                )
+                log_xi -= logsumexp(log_xi)
+                pairwise_transition_probs[t] = np.exp(log_xi)
+            regime_prob_previous = regime_prob.copy()
             regime_prob = np.clip(regime_prob, 1e-10, 1.0)
             regime_prob /= regime_prob.sum()
             regime_probs[t] = regime_prob
@@ -286,6 +299,7 @@ class SwitchingSSM:
             log_likelihood=total_log_lik,
             predicted_observations=predicted_obs,
             regime_filtered_means=regime_filtered_means,
+            pairwise_transition_probs=pairwise_transition_probs,
         )
 
     # ------------------------------------------------------------------
@@ -465,13 +479,11 @@ class SwitchingSSM:
             for t in range(T - 1):
                 counts += np.outer(probs[t], probs[t + 1])
 
-            # Small prior keeps every transition row valid, including rarely used states.
-            counts += 1e-3
             row_sums = counts.sum(axis=1, keepdims=True)
             self.transition_matrix = counts / row_sums
 
             # Small uniform prior prevents a degenerate initial distribution.
-            initial = probs[0] + 1e-3
+            initial = result.regime_probs[0] + 1e-3
             self.initial_regime_probs = initial / initial.sum()
 
         return log_likelihoods
