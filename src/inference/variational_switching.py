@@ -47,7 +47,7 @@ class SwitchingSSMResult:
     regime_probs: np.ndarray          # (T, n_regimes) — P(s_t | y_{1:t})
     filtered_means: np.ndarray        # (T, state_dim) — E[x_t | y_{1:t}]
     filtered_covs: np.ndarray         # (T, state_dim, state_dim)
-    viterbi_path: np.ndarray          # (T,) — most likely regime sequence
+    viterbi_path: np.ndarray          # (T,) — per-step posterior MAP regime (not Viterbi)
     log_likelihood: float
     predicted_observations: np.ndarray  # (T, obs_dim) — y_{t|t-1}
 
@@ -72,9 +72,11 @@ class SwitchingSSM:
     """
 
     def __init__(self, n_regimes: int, state_dim: int, obs_dim: int):
-        self.n_regimes = n_regimes
-        self.state_dim = state_dim
-        self.obs_dim = obs_dim
+        if n_regimes < 1 or state_dim < 1 or obs_dim < 1:
+            raise ValueError("n_regimes, state_dim, and obs_dim must all be positive integers.")
+        self.n_regimes = int(n_regimes)
+        self.state_dim = int(state_dim)
+        self.obs_dim = int(obs_dim)
 
         # Markov transition matrix (row i = P(s_t | s_{t-1}=i))
         self.transition_matrix = self._init_transition_matrix()
@@ -142,7 +144,7 @@ class SwitchingSSM:
         """
         Run switching Kalman filter on observation sequence.
 
-        Uses GPB2 (Generalized Pseudo-Bayesian) approximation:
+        Uses a GPB1-style collapsed Gaussian approximation:
         At each step, we maintain K Kalman filters (one per regime)
         and compute the mixture weights (regime probabilities).
 
@@ -266,8 +268,9 @@ class SwitchingSSM:
             )
             predicted_obs[t] = y_pred
 
-        # --- Viterbi decoding (most likely regime path) ---
-        viterbi = self._viterbi(observations)
+        # Per-step posterior MAP labels; not sequence-level Viterbi decoding.
+        # Keep the legacy field name for compatibility with existing callers.
+        viterbi = np.argmax(regime_probs, axis=1)
 
         return SwitchingSSMResult(
             regime_probs=regime_probs,
@@ -345,8 +348,9 @@ class SwitchingSSM:
         """
         Fit model parameters via EM (Expectation-Maximization).
 
-        E-step: run switching filter to get regime responsibilities
-        M-step: update transition matrix from regime assignments
+        E-step: run the approximate switching filter to get regime responsibilities
+        M-step: update only the Markov transition matrix from approximate
+                pairwise soft counts. A, C, Q, and R are NOT learned here.
 
         Parameters
         ----------
@@ -358,6 +362,14 @@ class SwitchingSSM:
         -------
         log_likelihoods : list of log-likelihood per iteration
         """
+        observations = np.asarray(observations, dtype=np.float64)
+        if not isinstance(n_iter, (int, np.integer)) or n_iter < 1:
+            raise ValueError("n_iter must be a positive integer.")
+        if observations.ndim != 2 or observations.shape[1] != self.obs_dim:
+            raise ValueError(f"observations must have shape (T, {self.obs_dim}).")
+        if observations.shape[0] < 2 or not np.isfinite(observations).all():
+            raise ValueError("observations must contain at least two finite time steps.")
+
         log_likelihoods = []
 
         for i in range(n_iter):
@@ -376,12 +388,14 @@ class SwitchingSSM:
             for t in range(T - 1):
                 counts += np.outer(probs[t], probs[t + 1])
 
-            # Normalize rows
+            # Small prior keeps every transition row valid, including rarely used states.
+            counts += 1e-3
             row_sums = counts.sum(axis=1, keepdims=True)
-            self.transition_matrix = counts / (row_sums + 1e-10)
+            self.transition_matrix = counts / row_sums
 
-            # Update initial distribution
-            self.initial_regime_probs = probs[0]
+            # Small uniform prior prevents a degenerate initial distribution.
+            initial = probs[0] + 1e-3
+            self.initial_regime_probs = initial / initial.sum()
 
         return log_likelihoods
 
