@@ -128,7 +128,7 @@ def causal_probability_smoothing(probabilities: np.ndarray, window: int) -> np.n
     return smoothed
 
 
-def run_seed(seed: int, sticky_prior_strength: float = 2.0):
+def run_seed(seed: int, sticky_prior_strength: float = 2.0, transition_prior_strength: float = 0.0):
     X, y, true_transition = generate_markov_sequence(seed=seed)
     split = int(0.7 * len(X))
     X_train, X_test = X[:split], X[split:]
@@ -148,7 +148,7 @@ def run_seed(seed: int, sticky_prior_strength: float = 2.0):
     model.initial_regime_probs = np.full(3, 1 / 3)
     for k in range(3):
         model.set_regime_params(k, b=initializer.cluster_centers_[k])
-    model.fit(train, n_iter=5, verbose=False, sticky_prior_strength=sticky_prior_strength)
+    model.fit(train, n_iter=5, verbose=False, sticky_prior_strength=sticky_prior_strength,\n              transition_prior_strength=transition_prior_strength)
     pard_probabilities = model.filter(test).regime_probs
     pard_prediction = np.argmax(pard_probabilities, axis=1)
     # Fixed causal smoothing windows are diagnostic post-processing choices,
@@ -172,7 +172,7 @@ def run_seed(seed: int, sticky_prior_strength: float = 2.0):
 
     return {
         "seed": seed,
-        "sticky_prior_strength": float(sticky_prior_strength),
+        "sticky_prior_strength": float(sticky_prior_strength),\n        "transition_prior_strength": float(transition_prior_strength),
         "train_steps": int(len(train)),
         "test_steps": int(len(test)),
         "true_test_regime_switches": int(np.count_nonzero(np.diff(y_test))),
