@@ -60,6 +60,8 @@ jobs:
           python -m pytest -q
       - name: Run synthetic parameter recovery experiment
         run: python experiments/synthetic_parameter_recovery.py
+      - name: Run multi-regime baseline comparison
+        run: python experiments/multiregime_baseline_comparison.py
       - name: Import FastAPI application
         working-directory: platform/backend
         run: python -c "from main import app; print(app.title)"
