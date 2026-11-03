@@ -356,6 +356,29 @@ Use the available options to select the dataset and experiment configuration.
 python -m pytest -q
 ```
 
+### 10.7 Sticky-prior sensitivity experiment
+
+Run the synthetic sensitivity experiment with:
+
+```bash
+python experiments/sticky_prior_sensitivity.py
+```
+
+The experiment evaluates sticky transition-prior strengths `0.0`, `0.5`, `1.0`, `2.0`, `4.0`, and `8.0` across five random seeds (2040–2044). The table below reports mean ARI and boundary F1 for the causal posterior moving-average window of 11 steps.
+
+| Sticky-prior strength | Mean ARI | Mean boundary F1 |
+|---:|---:|---:|
+| 0.0 | 0.2038 | **0.3447** |
+| 0.5 | 0.2040 | 0.3439 |
+| 1.0 | 0.2034 | 0.3439 |
+| 2.0 | 0.2028 | 0.3362 |
+| 4.0 | 0.2035 | 0.3360 |
+| 8.0 | **0.2053** | 0.3355 |
+
+The zero-strength setting has the highest mean boundary F1 in this experiment, while strength 8.0 has the highest mean ARI. The differences are small and the standard deviations across seeds are non-trivial, so this is not evidence that one setting is universally best. The implementation therefore uses `0.0` as the neutral default; users can still set a non-zero value explicitly.
+
+**Scope:** These are synthetic Markov-switching experiments, not real network-traffic validation. The reported ARI and boundary F1 are averaged over five seeds. The 11-step causal moving average is post-processing of regime probabilities, not a separately trained model.
+
 ## 11. Limitations
 
 - **Data:** 50,000-sample subsets, randomly sampled before the split, so no chronological holdout; UNSW-NB15 labels are binary ([Section 4](#4-datasets)).
