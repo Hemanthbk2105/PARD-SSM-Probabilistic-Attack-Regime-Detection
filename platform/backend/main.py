@@ -144,7 +144,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
     if not 2 <= regimes <= 5 or not 2 <= obs_dim <= 20 or not 2 <= state_dim <= 20:
         raise HTTPException(400, "Model dimensions are outside supported limits.")
     try:
-        from src.data_processing.feature_engineering import temporal_train_test_split, build_observation_sequence
+        from src.data_processing.feature_engineering import temporal_train_test_split
         from src.inference.variational_switching import SwitchingSSM
 
         X = np.load(x_path)
@@ -154,6 +154,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         X_train, X_test, y_train, y_test = temporal_train_test_split(X, y, test_ratio=0.2)
         if len(X_test) < window_size or len(X_train) < window_size:
             raise ValueError("Not enough samples for the selected window size.")
+
         scaler = RobustScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
@@ -162,46 +163,30 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         train_obs = pca.fit_transform(X_train_scaled)
         test_obs = pca.transform(X_test_scaled)
 
-        # Use complete non-overlapping windows so the model receives a true sequence.
-        train_count = len(train_obs) // window_size
-        test_count = len(test_obs) // window_size
-        train_seq = train_obs[:train_count * window_size].reshape(train_count, window_size, components)
-        test_seq = test_obs[:test_count * window_size].reshape(test_count, window_size, components)
-        train_labels = y_train[:train_count * window_size].reshape(train_count, window_size)
-        test_labels = y_test[:test_count * window_size].reshape(test_count, window_size)
-        if train_count == 0 or test_count == 0:
-            raise ValueError("No complete observation windows could be formed.")
-
+        # Fit and evaluate continuous held-out sequences. Do not restart the
+        # latent state at every arbitrary UI window boundary.
         model = SwitchingSSM(n_regimes=regimes, state_dim=state_dim, obs_dim=components)
-        history = model.fit(train_seq[0], n_iter=em_iterations, verbose=False)
-        # Evaluate each test window independently with the fitted model.
-        probs, paths, hidden, pred_obs, ll_values, true = [], [], [], [], [], []
-        for index in range(test_count):
-            result = model.filter(test_seq[index])
-            probs.append(result.regime_probs)
-            paths.append(result.viterbi_path)
-            hidden.append(result.filtered_means)
-            pred_obs.append(result.predicted_observations)
-            ll_values.append(float(result.log_likelihood))
-            true.append(test_labels[index])
-        regime_probs = np.concatenate(probs, axis=0)
-        predicted = np.concatenate(paths, axis=0)
-        actual = np.concatenate(true, axis=0)
-        hidden_states = np.concatenate(hidden, axis=0)
-        predicted_observations = np.concatenate(pred_obs, axis=0)
+        history = model.fit(train_obs, n_iter=em_iterations, verbose=False)
+        result = model.filter(test_obs)
+        regime_probs = result.regime_probs
+        # Use the filtered posterior MAP state; the model's current Viterbi
+        # helper is a simplified decoder and is not used for reported metrics.
+        predicted = np.argmax(regime_probs, axis=1)
+        actual = y_test[:len(predicted)]
+        hidden_states = result.filtered_means
+        predicted_observations = result.predicted_observations
         length = min(len(actual), len(predicted), len(regime_probs))
         actual, predicted = actual[:length], predicted[:length]
         regime_probs, hidden_states = regime_probs[:length], hidden_states[:length]
         predicted_observations = predicted_observations[:length]
         observed = test_obs[:length]
-        # Latent state IDs are arbitrary and do not map directly to dataset class IDs.
-        # ARI and NMI compare clusterings without assuming a particular ID alignment.
+
         ari = float(adjusted_rand_score(actual, predicted))
         nmi = float(normalized_mutual_info_score(actual, predicted))
-        attack_ids = [i for i in range(regimes) if i != 0]
-        attack_ids = [i for i in attack_ids if i < regime_probs.shape[1]]
-        attack_probability = regime_probs[:, attack_ids].sum(axis=1) if attack_ids else 1 - regime_probs[:, 0]
-        # This is a regime-probability aggregate, not a calibrated binary attack classifier.
+        # Latent states have no fixed semantic meaning. Show uncertainty,
+        # not an uncalibrated "attack probability" based on state ID zero.
+        regime_uncertainty = 1.0 - np.max(regime_probs, axis=1)
+        sample_step = max(1, length // 500)
         result_payload = {
             "dataset": name,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -218,18 +203,18 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "adjusted_rand_index": ari,
             "normalized_mutual_info": nmi,
             "prediction_mse": float(np.mean((observed - predicted_observations) ** 2)),
-            "log_likelihood": float(np.mean(ll_values)),
+            "log_likelihood": float(result.log_likelihood / max(1, length)),
             "ground_truth_classes": sorted(int(v) for v in np.unique(actual)),
             "latent_regime_ids": sorted(int(v) for v in np.unique(predicted)),
             "regime_names": {str(i): REGIME_NAMES.get(i, f"Latent regime {i}") for i in range(regimes)},
-            "regime_probabilities": regime_probs[::max(1, length // 500)].tolist(),
-            "predicted_regimes": predicted[::max(1, length // 500)].tolist(),
-            "true_regimes": actual[::max(1, length // 500)].tolist(),
-            "attack_probability": attack_probability[::max(1, length // 500)].tolist(),
-            "hidden_state": hidden_states[::max(1, length // 500), :min(3, hidden_states.shape[1])].tolist(),
+            "regime_probabilities": regime_probs[::sample_step].tolist(),
+            "predicted_regimes": predicted[::sample_step].tolist(),
+            "true_regimes": actual[::sample_step].tolist(),
+            "regime_uncertainty": regime_uncertainty[::sample_step].tolist(),
+            "hidden_state": hidden_states[::sample_step, :min(3, hidden_states.shape[1])].tolist(),
             "training_log_likelihood": [float(v) for v in history],
             "regime_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
-            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The model is fitted on the first complete training window only; results should be treated as an exploratory baseline, not a validated production detector.",
+            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The current EM implementation updates transition probabilities but does not fully learn all state-space parameters; treat this as an exploratory baseline, not a validated production detector. Latent-state uncertainty is not an attack probability.",
         }
         latest_result(name).write_text(json.dumps(result_payload, default=safe_json, indent=2), encoding="utf-8")
         return {"message": "Experiment completed.", "result": result_payload}
