@@ -9,7 +9,7 @@ A discrete Markov chain governs transitions between regimes.
 The model:
     s_t ~ Markov(Π)                        — discrete regime (attack stage)
     x_t = A_{s_t} * x_{t-1} + w_t         — continuous hidden state
-    y_t = C_{s_t} * x_t + v_t             — observed telemetry
+    y_t = C_{s_t} * x_t + b_{s_t} + v_t             — observed telemetry
 
 Inference: approximate forward filtering via regime-conditioned Kalman filters
 plus a forward recursion over regime probabilities.
@@ -39,6 +39,7 @@ class RegimeSSM:
     C: np.ndarray   # observation matrix (obs_dim, state_dim)
     Q: np.ndarray   # process noise      (state_dim, state_dim)
     R: np.ndarray   # obs noise          (obs_dim, obs_dim)
+    b: np.ndarray   # observation offset  (obs_dim,)
 
 
 @dataclass
@@ -120,7 +121,7 @@ class SwitchingSSM:
             C = rng.standard_normal((self.obs_dim, self.state_dim)) * 0.1
             Q = np.eye(self.state_dim) * (0.1 + 0.05 * k)
             R = np.eye(self.obs_dim) * (0.2 + 0.05 * k)
-            self.regimes.append(RegimeSSM(regime_id=k, A=A, C=C, Q=Q, R=R))
+            self.regimes.append(RegimeSSM(regime_id=k, A=A, C=C, Q=Q, R=R, b=np.zeros(self.obs_dim)))
 
     def set_regime_params(
         self,
@@ -129,6 +130,7 @@ class SwitchingSSM:
         C: Optional[np.ndarray] = None,
         Q: Optional[np.ndarray] = None,
         R: Optional[np.ndarray] = None,
+        b: Optional[np.ndarray] = None,
     ):
         """Manually set parameters for regime k."""
         r = self.regimes[k]
@@ -136,6 +138,7 @@ class SwitchingSSM:
         if C is not None: r.C = np.array(C)
         if Q is not None: r.Q = np.array(Q)
         if R is not None: r.R = np.array(R)
+        if b is not None: r.b = np.array(b, dtype=np.float64)
 
     # ------------------------------------------------------------------
     # Forward filtering (GPB2 approximation)
@@ -208,7 +211,7 @@ class SwitchingSSM:
             log_liks = np.zeros(K)
             for k in range(K):
                 r = self.regimes[k]
-                innov = y_t - r.C @ mu_pred[k]
+                innov = y_t - (r.C @ mu_pred[k] + r.b)
                 S = r.C @ P_pred[k] @ r.C.T + r.R
                 sign, logdet = np.linalg.slogdet(S)
                 if sign <= 0 or not np.isfinite(logdet):
@@ -266,7 +269,7 @@ class SwitchingSSM:
 
             # Predicted observation (mixture)
             y_pred = sum(
-                regime_prob[k] * self.regimes[k].C @ mu_pred[k]
+                regime_prob[k] * (self.regimes[k].C @ mu_pred[k] + self.regimes[k].b)
                 for k in range(K)
             )
             predicted_obs[t] = y_pred
@@ -393,9 +396,14 @@ class SwitchingSSM:
                     (1.0 - damping) * regime.Q + damping * q_est
                 )
 
-            c_est = self._weighted_ridge(states[:, k], observations, weights)
+            # Joint weighted regression estimates observation matrix and bias.
+            augmented_states = np.column_stack([states[:, k], np.ones(len(weights))])
+            observation_map = self._weighted_ridge(augmented_states, observations, weights)
+            c_est = observation_map[:, :self.state_dim]
+            b_est = observation_map[:, self.state_dim]
             regime.C = (1.0 - damping) * regime.C + damping * c_est
-            residual_y = observations - states[:, k] @ regime.C.T
+            regime.b = (1.0 - damping) * regime.b + damping * b_est
+            residual_y = observations - (states[:, k] @ regime.C.T + regime.b)
             weighted_y = residual_y * np.sqrt(weights)[:, None]
             r_est = self._positive_definite(weighted_y.T @ weighted_y / weights.sum())
             regime.R = self._positive_definite(
