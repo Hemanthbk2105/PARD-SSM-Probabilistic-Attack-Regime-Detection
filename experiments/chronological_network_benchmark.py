@@ -1,60 +1,212 @@
 """Leakage-safe chronological benchmark for prepared network-flow arrays.
 
-Input arrays must already be ordered by capture time. RobustScaler and PCA
-are fitted on training rows only and reused unchanged on the test rows.
+When timestamps are supplied, the train/test boundary is selected between
+unique timestamps so records sharing a timestamp cannot cross the boundary.
+RobustScaler and PCA are fitted on training rows only.
 """
 from __future__ import annotations
-import argparse, json, sys
+
+import argparse
+import json
+import sys
 from pathlib import Path
+
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.preprocessing import RobustScaler
 from hmmlearn.hmm import GaussianHMM
+
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.inference.variational_switching import SwitchingSSM
 from experiments.heldout_markov_regime_benchmark import boundary_metrics
 
-def run(data_path, labels_path, test_ratio=0.2, n_components=10, state_dim=8, em_iters=10, seed=42):
+
+def _format_timestamp(value, dtype):
+    if dtype.kind == "M":
+        return np.datetime_as_string(value, unit="auto")
+    return str(value)
+
+
+def run(
+    data_path,
+    labels_path,
+    timestamps_path=None,
+    test_ratio=0.2,
+    n_components=10,
+    state_dim=8,
+    em_iters=10,
+    seed=42,
+):
     X, y = np.load(data_path), np.load(labels_path)
+
     if X.ndim != 2 or y.ndim != 1 or len(X) != len(y):
         raise ValueError("Features must be 2D and labels 1D with matching row counts.")
     if len(X) < 20 or not np.isfinite(X).all():
         raise ValueError("Need at least 20 rows and finite feature values.")
-    if not 0 < test_ratio < 1: raise ValueError("test_ratio must be between 0 and 1.")
-    split = int(len(X) * (1 - test_ratio))
-    X_train, X_test, y_train, y_test = X[:split], X[split:], y[:split], y[split:]
-    if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
-        raise ValueError("Both chronological segments need at least two regimes.")
+    if not 0 < test_ratio < 1:
+        raise ValueError("test_ratio must be between 0 and 1.")
+
+    split_details = {
+        "method": "row_index",
+        "warning": (
+            "No timestamps supplied; this is a row-based split and may divide "
+            "records with equal timestamps across train and test."
+        ),
+    }
+
+    if timestamps_path is not None:
+        timestamps = np.load(timestamps_path)
+        if timestamps.ndim != 1 or len(timestamps) != len(X):
+            raise ValueError("Timestamps must be 1D and have the same row count as features.")
+
+        if timestamps.dtype.kind == "M":
+            if np.isnat(timestamps).any():
+                raise ValueError("Timestamps contain NaT values.")
+        elif timestamps.dtype.kind in "iuf":
+            if not np.isfinite(timestamps).all():
+                raise ValueError("Timestamps contain non-finite values.")
+        else:
+            raise ValueError("Timestamps must use a datetime or numeric dtype.")
+
+        if np.any(timestamps[1:] < timestamps[:-1]):
+            raise ValueError("Timestamps must be in non-decreasing chronological order.")
+
+        unique_timestamps = np.unique(timestamps)
+        train_timestamp_count = int(np.floor(len(unique_timestamps) * (1 - test_ratio)))
+        if train_timestamp_count < 1 or train_timestamp_count >= len(unique_timestamps):
+            raise ValueError("Not enough unique timestamps for the requested split.")
+
+        boundary_timestamp = unique_timestamps[train_timestamp_count]
+        split = int(np.searchsorted(timestamps, boundary_timestamp, side="left"))
+        if split < 10 or len(X) - split < 10:
+            raise ValueError(
+                "Timestamp-aware split produced fewer than 10 rows in one segment. "
+                "Try a different test_ratio."
+            )
+
+        split_details = {
+            "method": "unique_timestamp_boundary",
+            "unique_timestamps": int(len(unique_timestamps)),
+            "train_unique_timestamps": int(train_timestamp_count),
+            "test_unique_timestamps": int(len(unique_timestamps) - train_timestamp_count),
+            "first_timestamp": _format_timestamp(timestamps[0], timestamps.dtype),
+            "last_timestamp": _format_timestamp(timestamps[-1], timestamps.dtype),
+            "first_test_timestamp": _format_timestamp(boundary_timestamp, timestamps.dtype),
+            "last_train_timestamp": _format_timestamp(timestamps[split - 1], timestamps.dtype),
+            "train_timestamp_range": [
+                _format_timestamp(timestamps[0], timestamps.dtype),
+                _format_timestamp(timestamps[split - 1], timestamps.dtype),
+            ],
+            "test_timestamp_range": [
+                _format_timestamp(timestamps[split], timestamps.dtype),
+                _format_timestamp(timestamps[-1], timestamps.dtype),
+            ],
+            "same_timestamp_crosses_boundary": bool(
+                timestamps[split - 1] == timestamps[split]
+            ),
+        }
+        if split_details["same_timestamp_crosses_boundary"]:
+            raise RuntimeError("Internal error: a timestamp was split across train and test.")
+
+    else:
+        split = int(len(X) * (1 - test_ratio))
+
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    train_regimes = np.unique(y_train)
+    test_regimes = np.unique(y_test)
+    if len(train_regimes) < 2:
+        raise ValueError(
+            "Training segment contains fewer than two regimes. "
+            "Try a larger training period or review the chronological label distribution."
+        )
+
     scaler = RobustScaler().fit(X_train)
-    train_scaled, test_scaled = scaler.transform(X_train), scaler.transform(X_test)
+    train_scaled = scaler.transform(X_train)
+    test_scaled = scaler.transform(X_test)
+
     components = min(n_components, train_scaled.shape[1], len(train_scaled) - 1)
     pca = PCA(n_components=components, random_state=seed).fit(train_scaled)
-    train, test = pca.transform(train_scaled), pca.transform(test_scaled)
-    regimes = len(np.unique(y_train))
-    model = SwitchingSSM(n_regimes=regimes, state_dim=min(state_dim, components), obs_dim=components)
+    train = pca.transform(train_scaled)
+    test = pca.transform(test_scaled)
+
+    regimes = len(train_regimes)
+    model = SwitchingSSM(
+        n_regimes=regimes,
+        state_dim=min(state_dim, components),
+        obs_dim=components,
+    )
     model.fit(train, n_iter=em_iters, verbose=False)
     pard = np.argmax(model.filter(test).regime_probs, axis=1)
-    hmm = GaussianHMM(n_components=regimes, covariance_type="diag", n_iter=150, random_state=seed, min_covar=1e-3)
+
+    hmm = GaussianHMM(
+        n_components=regimes,
+        covariance_type="diag",
+        n_iter=150,
+        random_state=seed,
+        min_covar=1e-3,
+    )
     hmm.fit(train)
     hmm_pred = hmm.predict(test)
+
     def metrics(pred):
-        return {"ari": float(adjusted_rand_score(y_test, pred)),
-                "nmi": float(normalized_mutual_info_score(y_test, pred)),
-                "boundary": boundary_metrics(y_test, pred)}
-    return {"rows": int(len(X)), "train_rows": int(len(X_train)), "test_rows": int(len(X_test)),
-            "preprocessing": "RobustScaler and PCA fitted on training rows only; reused on test rows",
-            "train_regimes": sorted(map(int, np.unique(y_train))),
-            "test_regimes": sorted(map(int, np.unique(y_test))),
-            "explained_variance_ratio": float(pca.explained_variance_ratio_.sum()),
-            "metrics": {"pard_ssm": metrics(pard), "gaussian_hmm": metrics(hmm_pred)},
-            "limitations": ["Input row order must be verified against capture timestamps.",
-                            "This benchmark does not claim synthetic results transfer to real traffic."]}
+        return {
+            "ari": float(adjusted_rand_score(y_test, pred)),
+            "nmi": float(normalized_mutual_info_score(y_test, pred)),
+            "boundary": boundary_metrics(y_test, pred),
+        }
+
+    limitations = [
+        "PARD-SSM and Gaussian HMM regime IDs are unsupervised; metrics compare clusters with ground-truth labels.",
+        "RobustScaler and PCA are fitted on training rows only.",
+        "Results on CICIDS2017 do not by themselves establish generalization to live network traffic.",
+    ]
+    if len(np.setdiff1d(test_regimes, train_regimes)):
+        limitations.append(
+            "Some test regimes do not occur in training: "
+            + str(list(map(int, np.setdiff1d(test_regimes, train_regimes))))
+        )
+    if timestamps_path is None:
+        limitations.append(split_details["warning"])
+
+    return {
+        "rows": int(len(X)),
+        "train_rows": int(len(X_train)),
+        "test_rows": int(len(X_test)),
+        "actual_test_ratio": float(len(X_test) / len(X)),
+        "split": split_details,
+        "preprocessing": (
+            "RobustScaler and PCA fitted on training rows only; reused unchanged on test rows"
+        ),
+        "train_regimes": sorted(map(int, train_regimes)),
+        "test_regimes": sorted(map(int, test_regimes)),
+        "train_label_counts": {
+            str(int(label)): int(count)
+            for label, count in zip(*np.unique(y_train, return_counts=True))
+        },
+        "test_label_counts": {
+            str(int(label)): int(count)
+            for label, count in zip(*np.unique(y_test, return_counts=True))
+        },
+        "explained_variance_ratio": float(pca.explained_variance_ratio_.sum()),
+        "metrics": {
+            "pard_ssm": metrics(pard),
+            "gaussian_hmm": metrics(hmm_pred),
+        },
+        "limitations": limitations,
+    }
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", required=True); parser.add_argument("--labels", required=True)
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--labels", required=True)
+    parser.add_argument("--timestamps", default=None)
     parser.add_argument("--test-ratio", type=float, default=0.2)
     parser.add_argument("--components", type=int, default=10)
     parser.add_argument("--state-dim", type=int, default=8)
@@ -62,6 +214,16 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", default="chronological_network_benchmark.json")
     args = parser.parse_args()
-    report = run(args.data, args.labels, args.test_ratio, args.components, args.state_dim, args.em_iters, args.seed)
-    Path(args.output).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    report = run(
+        args.data,
+        args.labels,
+        args.timestamps,
+        args.test_ratio,
+        args.components,
+        args.state_dim,
+        args.em_iters,
+        args.seed,
+    )
+    Path(args.output).write_text(json.dumps(report, indent=2) + "\\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
