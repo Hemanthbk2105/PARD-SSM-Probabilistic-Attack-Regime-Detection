@@ -240,7 +240,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
     df = df[available_cols + ["regime"]].dropna()
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
-    if sample_size and len(df) > sample_size:
+    if sample_size is not None and sample_size > 0 and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=42)
 
     X = df[available_cols].values.astype(np.float32)
