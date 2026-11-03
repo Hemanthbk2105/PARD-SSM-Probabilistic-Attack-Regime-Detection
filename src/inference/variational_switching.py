@@ -12,7 +12,7 @@ The model:
     y_t = C_{s_t} * x_t + v_t             — observed telemetry
 
 Inference: approximate forward filtering via regime-conditioned Kalman filters
-plus a viterbi/forward algorithm over regime probabilities.
+plus a forward recursion over regime probabilities.
 
 Reference:
     Ghahramani & Hinton (1996). Switching State-Space Models.
@@ -61,7 +61,7 @@ class SwitchingSSM:
     """
     Switching State-Space Model with K regimes.
 
-    Inference is performed using the GPB2 (Generalized Pseudo-Bayesian order 2)
+    Inference is performed using a GPB1 (Generalized Pseudo-Bayesian order 1)
     approximation — a practical approximation to exact inference which is
     intractable due to exponential growth of mixture components.
 
