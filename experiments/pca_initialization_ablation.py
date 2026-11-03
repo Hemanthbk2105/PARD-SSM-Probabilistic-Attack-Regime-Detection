@@ -66,7 +66,7 @@ def run_pca_initialized_seed(seed: int) -> dict:
         model.P0[k] = _covariance(regime_z - model.mu0[k])
         model.set_regime_params(k, C=C, b=residual[mask].mean(axis=0))
         if np.count_nonzero(mask[1:] & mask[:-1]) >= 5:
-            pair_mask = labels[1:] == k
+            pair_mask = (labels[1:] == k) & (labels[:-1] == k)
             x_prev, x_now = z_train[:-1][pair_mask], z_train[1:][pair_mask]
             if len(x_prev) >= 5:
                 lhs = x_prev.T @ x_prev + 1e-2 * np.eye(2)
