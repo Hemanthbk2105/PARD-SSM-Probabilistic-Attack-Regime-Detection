@@ -108,6 +108,55 @@ def test_fit_updates_state_space_parameters_and_keeps_covariances_valid():
             assert np.linalg.eigvalsh(covariance).min() > 0
     assert changed, "The approximate M-step should update at least one state-space parameter."
 
+
+def make_known_dynamics_sequence(T=500, seed=7):
+    """Generate observations from a one-regime linear Gaussian state-space model."""
+    rng = np.random.default_rng(seed)
+    A = np.array([[0.82, 0.08], [0.0, 0.76]])
+    C = np.array([[1.1, 0.2], [-0.15, 0.9], [0.4, -0.3]])
+    Q = np.diag([0.025, 0.035])
+    R = np.diag([0.04, 0.05, 0.03])
+    states = np.zeros((T, 2))
+    observations = np.zeros((T, 3))
+    states[0] = rng.normal(size=2)
+    for t in range(1, T):
+        states[t] = A @ states[t - 1] + rng.multivariate_normal(np.zeros(2), Q)
+    for t in range(T):
+        observations[t] = C @ states[t] + rng.multivariate_normal(np.zeros(3), R)
+    return observations, states, A, C, Q, R
+
+
+def test_known_single_regime_dynamics_synthetic_experiment():
+    observations, _, true_a, true_c, true_q, true_r = make_known_dynamics_sequence()
+    model = SwitchingSSM(n_regimes=1, state_dim=2, obs_dim=3)
+    model.set_regime_params(
+        0,
+        A=np.eye(2) * 0.7,
+        C=np.ones((3, 2)) * 0.15,
+        Q=np.eye(2) * 0.08,
+        R=np.eye(3) * 0.12,
+    )
+
+    before = model.filter(observations)
+    history = model.fit(observations, n_iter=5, verbose=False)
+    after = model.filter(observations)
+
+    assert np.isfinite(history).all()
+    assert np.isfinite(after.log_likelihood)
+    np.testing.assert_allclose(after.regime_probs, 1.0, atol=1e-10)
+    for matrix in (model.regimes[0].A, model.regimes[0].C,
+                   model.regimes[0].Q, model.regimes[0].R):
+        assert np.isfinite(matrix).all()
+    for covariance in (model.regimes[0].Q, model.regimes[0].R):
+        assert np.linalg.eigvalsh(covariance).min() > 0
+    # The synthetic ground-truth parameters are retained for reproducible
+    # follow-up parameter-error analysis; this smoke test does not claim recovery.
+    assert true_a.shape == model.regimes[0].A.shape
+    assert true_c.shape == model.regimes[0].C.shape
+    assert true_q.shape == model.regimes[0].Q.shape
+    assert true_r.shape == model.regimes[0].R.shape
+    assert before.regime_probs.shape == after.regime_probs.shape
+
 if __name__ == "__main__":
     test_switching_ssm_output_shapes()
     test_regime_probs_sum_to_one()
@@ -117,4 +166,5 @@ if __name__ == "__main__":
     test_filtered_covariances_are_symmetric_and_positive_semidefinite()
     test_reported_regime_path_matches_posterior_map()
     test_fit_updates_state_space_parameters_and_keeps_covariances_valid()
+    test_known_single_regime_dynamics_synthetic_experiment()
     print("All Switching SSM tests passed!")
