@@ -72,6 +72,8 @@ jobs:
         run: python experiments/sticky_prior_sensitivity.py
       - name: Run transition-matrix prior sensitivity experiment
         run: python experiments/transition_prior_sensitivity.py
+      - name: Run train-only PCA initialization ablation
+        run: python experiments/pca_initialization_ablation.py
       - name: Upload synthetic experiment reports
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +85,7 @@ jobs:
             heldout_markov_regime_benchmark.json
             sticky_prior_sensitivity.json
             transition_prior_sensitivity.json
+            pca_initialization_ablation.json
           if-no-files-found: error
       - name: Import FastAPI application
         working-directory: platform/backend
