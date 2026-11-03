@@ -164,7 +164,7 @@ def test_regime_observation_offset_is_used_in_predictions():
     model.set_regime_params(0, C=np.zeros((3, 2)), b=offset)
     observations = np.tile(offset, (8, 1))
     result = model.filter(observations)
-    np.testing.assert_allclose(result.predicted_observations, offset[None, :], atol=1e-10)
+    np.testing.assert_allclose(result.predicted_observations, np.tile(offset, (len(observations), 1)), atol=1e-10)
 
 
 def test_fit_can_update_regime_observation_offsets():
