@@ -53,9 +53,6 @@ CICIDS_LABEL_MAP = {
     "Web Attack – Brute Force": 2,
     "Web Attack – XSS": 2,
     "Web Attack – Sql Injection": 2,
-    "Web Attack \\x96 Brute Force": 2,
-    "Web Attack \\x96 XSS": 2,
-    "Web Attack \\x96 Sql Injection": 2,
     "Infiltration": 4,
     "Bot": 4,
     "DDoS": 3,
@@ -167,8 +164,8 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     label_col = " Label" if " Label" in df.columns else "Label"
     normalized_labels = (
         df[label_col].astype("string").str.strip()
-        .str.replace("\\x96", "–", regex=False)
-        .str.replace("\\u0096", "–", regex=False)
+        .str.replace(chr(0x96), "–", regex=False)
+        .str.replace(chr(0x0096), "–", regex=False)
     )
     mapped_labels = normalized_labels.map(CICIDS_LABEL_MAP)
     unknown_labels = sorted(normalized_labels[mapped_labels.isna()].dropna().unique().tolist())
