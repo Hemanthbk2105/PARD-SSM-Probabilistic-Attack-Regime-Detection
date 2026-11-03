@@ -239,7 +239,7 @@ class SwitchingSSM:
             P_filt = []
             for k in range(K):
                 r = self.regimes[k]
-                innov = y_t - r.C @ mu_pred[k]
+                innov = y_t - (r.C @ mu_pred[k] + r.b)
                 S = r.C @ P_pred[k] @ r.C.T + r.R
                 Kgain = np.linalg.solve(S, r.C @ P_pred[k]).T
                 mf = mu_pred[k] + Kgain @ innov
@@ -311,7 +311,7 @@ class SwitchingSSM:
         for k in range(K):
             r = self.regimes[k]
             y = observations[0]
-            innov = y - r.C @ self.mu0[k]
+            innov = y - (r.C @ self.mu0[k] + r.b)
             S = r.C @ self.P0[k] @ r.C.T + r.R
             _, logdet = np.linalg.slogdet(S)
             log_delta[k] += -0.5 * (obs_dim * np.log(2 * np.pi) + logdet + innov @ np.linalg.solve(S, innov))
@@ -328,7 +328,7 @@ class SwitchingSSM:
                 # Emission
                 y = observations[t]
                 mp = r.A @ self.mu0[k]  # simplified
-                innov = y - r.C @ mp
+                innov = y - (r.C @ mp + r.b)
                 S = r.C @ self.P0[k] @ r.C.T + r.R
                 _, logdet = np.linalg.slogdet(S)
                 log_delta_new += -0.5 * (obs_dim * np.log(2 * np.pi) + logdet + innov @ np.linalg.solve(S, innov))
