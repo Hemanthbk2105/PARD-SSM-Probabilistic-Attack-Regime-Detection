@@ -166,7 +166,8 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         # Fit and evaluate continuous held-out sequences. Do not restart the
         # latent state at every arbitrary UI window boundary.
         model = SwitchingSSM(n_regimes=regimes, state_dim=state_dim, obs_dim=components)
-        history = model.fit(train_obs, n_iter=em_iterations, verbose=False)
+        training_steps = min(len(train_obs), 5000)
+        history = model.fit(train_obs[:training_steps], n_iter=em_iterations, verbose=False)
         result = model.filter(test_obs)
         regime_probs = result.regime_probs
         # Use the filtered posterior MAP state; the model's current Viterbi
@@ -193,6 +194,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "samples": int(len(X)),
             "feature_count": int(X.shape[1]),
             "train_samples": int(len(X_train)),
+            "model_training_steps": int(training_steps),
             "test_samples": int(len(X_test)),
             "evaluated_steps": int(length),
             "regimes": int(regimes),
@@ -214,7 +216,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "hidden_state": hidden_states[::sample_step, :min(3, hidden_states.shape[1])].tolist(),
             "training_log_likelihood": [float(v) for v in history],
             "regime_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
-            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The current EM implementation updates transition probabilities but does not fully learn all state-space parameters; treat this as an exploratory baseline, not a validated production detector. Latent-state uncertainty is not an attack probability.",
+            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The current EM implementation updates transition probabilities but does not fully learn all state-space parameters; it is an exploratory baseline, not a validated production detector. Model fitting uses at most the first 5,000 training observations for runtime control. Latent-state uncertainty is not an attack probability.",
         }
         latest_result(name).write_text(json.dumps(result_payload, default=safe_json, indent=2), encoding="utf-8")
         return {"message": "Experiment completed.", "result": result_payload}
