@@ -478,8 +478,10 @@ class SwitchingSSM:
             # switching when posterior mass is spread across regimes.
             counts = result.pairwise_transition_probs[1:].sum(axis=0)
 
-            # Small Dirichlet pseudocount keeps every transition possible.
+            # A weak sticky Dirichlet prior expresses that regimes usually
+            # persist for more than one observation, without forbidding switches.
             counts += 1e-3
+            counts += 2.0 * np.eye(self.n_regimes)
             row_sums = counts.sum(axis=1, keepdims=True)
             self.transition_matrix = counts / np.maximum(row_sums, 1e-12)
 
