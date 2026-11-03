@@ -14,6 +14,7 @@ import sys
 
 import numpy as np
 from sklearn.mixture import GaussianMixture
+from sklearn.cluster import KMeans
 from hmmlearn.hmm import GaussianHMM
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
@@ -81,6 +82,17 @@ def main():
     X, y = generate_regime_sequence()
     model = SwitchingSSM(n_regimes=3, state_dim=2, obs_dim=X.shape[1])
 
+    # Data-driven observation-offset initialization. This gives each regime
+    # a distinct mean before filtering; it is unsupervised but uses the full
+    # benchmark sequence, so treat the result as a transductive diagnostic.
+    offset_initializer = KMeans(n_clusters=3, random_state=2027, n_init=10)
+    offset_labels = offset_initializer.fit_predict(X)
+    model.transition_matrix = np.full((3, 3), 0.025)
+    np.fill_diagonal(model.transition_matrix, 0.95)
+    model.initial_regime_probs = np.full(3, 1.0 / 3.0)
+    for k in range(3):
+        model.set_regime_params(k, b=offset_initializer.cluster_centers_[k])
+
     initial_result = model.filter(X)
     model.fit(X, n_iter=5, verbose=False)
     trained_result = model.filter(X)
@@ -115,9 +127,11 @@ def main():
         "regime_segment_lengths": [400, 400, 400],
         "metrics": {
             "pard_ssm_before_training": clustering_metrics(y, pard_initial),
-            "pard_ssm_after_approximate_generalized_em": clustering_metrics(
+            "pard_ssm_after_offset_initialization": clustering_metrics(y, pard_initial),
+            "pard_ssm_after_offset_initialization_and_approximate_generalized_em": clustering_metrics(
                 y, pard_trained
             ),
+            "kmeans_offset_initializer": clustering_metrics(y, offset_labels),
             "gaussian_mixture_baseline": clustering_metrics(y, gmm_labels),
             "gaussian_hidden_markov_model": clustering_metrics(y, hmm_labels),
             "standard_kalman_filter": {
@@ -129,6 +143,7 @@ def main():
         "transition_diagnostics": {
             "learned_transition_matrix": model.transition_matrix.tolist(),
             "true_regime_order": [0, 1, 2],
+            "learned_observation_offsets": [regime.b.tolist() for regime in model.regimes],
             "predicted_regime_switches_before_training": int(
                 np.count_nonzero(np.diff(pard_initial))
             ),
@@ -146,6 +161,8 @@ def main():
             "The standard Kalman filter has one continuous state and no discrete regime labels; its predictive metrics are not directly comparable to ARI/NMI.",
             "These baselines are trained and evaluated on the same synthetic sequence; this is a controlled diagnostic, not a held-out generalization test.",
             "The switching model uses approximate GPB1 filtering and approximate generalized-EM updates.",
+            "KMeans observation-offset initialization uses the full synthetic sequence and is transductive; it is not an online initialization protocol.",
+            "PARD-SSM and KMeans share the same unsupervised KMeans-derived cluster centers for this diagnostic, so do not interpret this as a fair isolated test of the switching model's learned offsets.",
             "Latent state labels are permutation-invariant; ARI and NMI avoid assuming matching state IDs.",
         ],
     }
