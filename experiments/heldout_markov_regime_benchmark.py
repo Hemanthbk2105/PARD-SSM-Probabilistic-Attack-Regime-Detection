@@ -176,7 +176,8 @@ def run_seed(seed: int, sticky_prior_strength: float = 2.0, transition_prior_str
 
     return {
         "seed": seed,
-        "sticky_prior_strength": float(sticky_prior_strength),\n        "transition_prior_strength": float(transition_prior_strength),
+        "sticky_prior_strength": float(sticky_prior_strength),
+        "transition_prior_strength": float(transition_prior_strength),
         "train_steps": int(len(train)),
         "test_steps": int(len(test)),
         "true_test_regime_switches": int(np.count_nonzero(np.diff(y_test))),
