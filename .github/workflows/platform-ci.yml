@@ -6,6 +6,7 @@ on:
     paths:
       - "platform/**"
       - "src/**"
+      - "tests/**"
       - ".github/workflows/platform-ci.yml"
   push:
     branches: ["feat/pard-intelligence-platform"]
