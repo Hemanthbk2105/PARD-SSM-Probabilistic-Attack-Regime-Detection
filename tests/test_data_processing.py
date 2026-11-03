@@ -238,7 +238,7 @@ def test_cicids_loader_normalizes_features_and_web_attack_labels():
             "Timestamp": ["2017-07-06 12:00:02", "2017-07-06 12:00:01"],
             "Destination Port": [443, 80],
             "Flow Duration": [20, 10],
-            "Label": ["BENIGN", "Web Attack \\x96 Brute Force"],
+            "Label": ["BENIGN", "Web Attack " + chr(0x96) + " Brute Force"],
         })
         frame.to_csv(root / "Thursday.csv", index=False)
         X, y = __import__(
