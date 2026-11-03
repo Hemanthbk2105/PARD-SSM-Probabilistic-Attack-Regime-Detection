@@ -379,6 +379,21 @@ The zero-strength setting has the highest mean boundary F1 in this experiment, w
 
 **Scope:** These are synthetic Markov-switching experiments, not real network-traffic validation. The reported ARI and boundary F1 are averaged over five seeds. The 11-step causal moving average is post-processing of regime probabilities, not a separately trained model.
 
+### 10.8 Initial transition-matrix prior sensitivity
+
+A second diagnostic separates two ideas that were previously mixed together:
+
+- `sticky_prior_strength`: adds diagonal pseudocounts to favour self-transitions.
+- `transition_prior_strength`: adds pseudocounts distributed according to the transition matrix present when `fit()` starts.
+
+Run the experiment with:
+
+```bash
+python experiments/transition_prior_sensitivity.py
+```
+
+It evaluates prior strengths `0`, `10`, `25`, `50`, `100`, `250`, and `500` across the same five synthetic seeds. It reports held-out ARI, NMI, boundary metrics, and the learned mean transition-matrix diagonal. The experiment is intended to diagnose whether transition estimates become too diffuse during approximate generalized-EM updates. It is not evidence of real-world detection performance, and its prior strengths are experimental pseudocount settings rather than calibrated probabilities.
+
 ## 11. Limitations
 
 - **Data:** 50,000-sample subsets, randomly sampled before the split, so no chronological holdout; UNSW-NB15 labels are binary ([Section 4](#4-datasets)).
