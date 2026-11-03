@@ -472,15 +472,16 @@ class SwitchingSSM:
             # Approximate M-step for regime-conditioned state-space parameters.
             self._update_state_space(observations, result)
 
-            # Update transition matrix from marginal soft counts.
-            probs = result.regime_probs  # (T, K)
-            T = probs.shape[0]
-            counts = np.zeros((self.n_regimes, self.n_regimes))
-            for t in range(T - 1):
-                counts += np.outer(probs[t], probs[t + 1])
+            # Update transitions from the approximate pairwise posterior.
+            # Outer products of adjacent marginal probabilities incorrectly
+            # treat the two regime assignments as independent and can inflate
+            # switching when posterior mass is spread across regimes.
+            counts = result.pairwise_transition_probs[1:].sum(axis=0)
 
+            # Small Dirichlet pseudocount keeps every transition possible.
+            counts += 1e-3
             row_sums = counts.sum(axis=1, keepdims=True)
-            self.transition_matrix = counts / row_sums
+            self.transition_matrix = counts / np.maximum(row_sums, 1e-12)
 
             # Small uniform prior prevents a degenerate initial distribution.
             initial = result.regime_probs[0] + 1e-3
