@@ -175,6 +175,25 @@ def test_fit_can_update_regime_observation_offsets():
     assert any(not np.allclose(regime.b, old)
                for regime, old in zip(model.regimes, before))
 
+
+def test_pairwise_transition_posterior_is_normalized():
+    obs = make_synthetic_obs(T=80, obs_dim=3, n_regimes=3)
+    model = SwitchingSSM(n_regimes=3, state_dim=2, obs_dim=3)
+    result = model.filter(obs)
+    pairwise = result.pairwise_transition_probs
+    assert pairwise.shape == (len(obs), 3, 3)
+    np.testing.assert_allclose(pairwise[1:].sum(axis=(1, 2)), 1.0, atol=1e-8)
+    assert np.all(pairwise >= 0)
+
+
+def test_transition_update_uses_valid_sticky_rows():
+    obs = make_synthetic_obs(T=100, obs_dim=3, n_regimes=3)
+    model = SwitchingSSM(n_regimes=3, state_dim=2, obs_dim=3)
+    model.fit(obs, n_iter=3, verbose=False)
+    np.testing.assert_allclose(model.transition_matrix.sum(axis=1), 1.0, atol=1e-8)
+    assert np.all(model.transition_matrix > 0)
+    assert np.all(np.diag(model.transition_matrix) > 0)
+
 if __name__ == "__main__":
     test_switching_ssm_output_shapes()
     test_regime_probs_sum_to_one()
@@ -187,4 +206,6 @@ if __name__ == "__main__":
     test_known_single_regime_dynamics_synthetic_experiment()
     test_regime_observation_offset_is_used_in_predictions()
     test_fit_can_update_regime_observation_offsets()
+    test_pairwise_transition_posterior_is_normalized()
+    test_transition_update_uses_valid_sticky_rows()
     print("All Switching SSM tests passed!")
