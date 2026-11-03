@@ -14,6 +14,7 @@ import sys
 
 import numpy as np
 from sklearn.mixture import GaussianMixture
+from hmmlearn.hmm import GaussianHMM
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.inference.variational_switching import SwitchingSSM
+from src.inference.kalman_filter import KalmanFilter
 
 
 def generate_regime_sequence(length_per_regime: int = 400, seed: int = 2027):
@@ -90,6 +92,21 @@ def main():
     )
     gmm_labels = gmm.fit_predict(X)
 
+    hmm = GaussianHMM(
+        n_components=3, covariance_type="diag", n_iter=100,
+        random_state=2027, min_covar=1e-4,
+    )
+    hmm.fit(X)
+    hmm_labels = hmm.predict(X)
+
+    # A standard Kalman filter has no discrete regime labels. Evaluate it
+    # using one-step observation prediction error and average predictive NLL.
+    kalman = KalmanFilter.init_from_data(X, state_dim=2, noise_scale=0.1)
+    kalman_result = kalman.filter(X)
+    kalman_predicted_observations = kalman_result.predicted_means @ kalman.C.T
+    kalman_prediction_mse = float(np.mean((X - kalman_predicted_observations) ** 2))
+    kalman_average_nll = float(-kalman_result.log_likelihood / len(X))
+
     report = {
         "experiment": "three_regime_linear_gaussian_sequence",
         "seed": 2027,
@@ -102,6 +119,12 @@ def main():
                 y, pard_trained
             ),
             "gaussian_mixture_baseline": clustering_metrics(y, gmm_labels),
+            "gaussian_hidden_markov_model": clustering_metrics(y, hmm_labels),
+            "standard_kalman_filter": {
+                "one_step_observation_prediction_mse": kalman_prediction_mse,
+                "average_negative_log_likelihood": kalman_average_nll,
+                "note": "Continuous-state baseline; ARI/NMI are not applicable because it has no discrete regimes.",
+            },
         },
         "transition_diagnostics": {
             "learned_transition_matrix": model.transition_matrix.tolist(),
@@ -119,6 +142,9 @@ def main():
             "The benchmark does not represent the class imbalance or complexity of CICIDS2017/UNSW-NB15.",
             "ARI and NMI evaluate clustering agreement, not operational intrusion detection.",
             "GMM is a static clustering baseline and does not model temporal transitions.",
+            "Gaussian HMM models discrete temporal transitions but not continuous latent state dynamics.",
+            "The standard Kalman filter has one continuous state and no discrete regime labels; its predictive metrics are not directly comparable to ARI/NMI.",
+            "These baselines are trained and evaluated on the same synthetic sequence; this is a controlled diagnostic, not a held-out generalization test.",
             "The switching model uses approximate GPB1 filtering and approximate generalized-EM updates.",
             "Latent state labels are permutation-invariant; ARI and NMI avoid assuming matching state IDs.",
         ],
