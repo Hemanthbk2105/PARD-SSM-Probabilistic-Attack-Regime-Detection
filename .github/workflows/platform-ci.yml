@@ -62,6 +62,14 @@ jobs:
         run: python experiments/synthetic_parameter_recovery.py
       - name: Run multi-regime baseline comparison
         run: python experiments/multiregime_baseline_comparison.py
+      - name: Upload synthetic experiment reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: pard-ssm-synthetic-reports
+          path: |
+            synthetic_parameter_recovery.json
+            multiregime_baseline_comparison.json
+          if-no-files-found: error
       - name: Import FastAPI application
         working-directory: platform/backend
         run: python -c "from main import app; print(app.title)"
