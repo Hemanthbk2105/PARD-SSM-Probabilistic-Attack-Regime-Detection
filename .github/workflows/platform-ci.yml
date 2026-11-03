@@ -68,6 +68,8 @@ jobs:
         run: python experiments/multiseed_transition_stability.py
       - name: Run held-out Markov regime benchmark
         run: python experiments/heldout_markov_regime_benchmark.py
+      - name: Run sticky-prior sensitivity experiment
+        run: python experiments/sticky_prior_sensitivity.py
       - name: Upload synthetic experiment reports
         uses: actions/upload-artifact@v4
         with:
@@ -77,6 +79,7 @@ jobs:
             multiregime_baseline_comparison.json
             multiseed_transition_stability.json
             heldout_markov_regime_benchmark.json
+            sticky_prior_sensitivity.json
           if-no-files-found: error
       - name: Import FastAPI application
         working-directory: platform/backend
