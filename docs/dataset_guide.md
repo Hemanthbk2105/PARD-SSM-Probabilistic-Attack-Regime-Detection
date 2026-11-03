@@ -105,7 +105,7 @@ The loaders concatenate CSV files in sorted filename order. Set `--sample 0` to 
 After creating feature and label arrays with `--sample 0`, verify that the rows are ordered by the capture timestamps and that the same row filtering was applied to both arrays. Then run:
 
 ```bash
-python experiments/chronological_network_benchmark.py \\
+python experiments/chronological_network_benchmark.py \
   --data data/processed/cicids2017_features.npy \\
   --labels data/processed/cicids2017_labels.npy \\
   --test-ratio 0.2 \\
