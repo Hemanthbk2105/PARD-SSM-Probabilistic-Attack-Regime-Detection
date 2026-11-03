@@ -432,6 +432,7 @@ class SwitchingSSM:
         n_iter: int = 20,
         verbose: bool = True,
         sticky_prior_strength: float = 0.0,
+        transition_prior_strength: float = 0.0,
     ) -> List[float]:
         """
         Fit model parameters via EM (Expectation-Maximization).
@@ -446,6 +447,9 @@ class SwitchingSSM:
         observations : (T, obs_dim)
         n_iter       : EM iterations
         verbose      : print log-likelihood each iteration
+        sticky_prior_strength: diagonal transition pseudocount per row and iteration
+        transition_prior_strength: total pseudocount per row distributed according
+                                   to the transition matrix present at fit start
 
         Returns
         -------
@@ -456,11 +460,16 @@ class SwitchingSSM:
             raise ValueError("n_iter must be a positive integer.")
         if not np.isfinite(sticky_prior_strength) or sticky_prior_strength < 0:
             raise ValueError("sticky_prior_strength must be finite and non-negative.")
+        if not np.isfinite(transition_prior_strength) or transition_prior_strength < 0:
+            raise ValueError("transition_prior_strength must be finite and non-negative.")
         if observations.ndim != 2 or observations.shape[1] != self.obs_dim:
             raise ValueError(f"observations must have shape (T, {self.obs_dim}).")
         if observations.shape[0] < 2 or not np.isfinite(observations).all():
             raise ValueError("observations must contain at least two finite time steps.")
 
+        # Preserve the caller's initial transition belief as a Dirichlet prior.
+        # Its strength is expressed as an equivalent total pseudocount per row.
+        transition_prior = self.transition_matrix.copy()
         log_likelihoods = []
 
         for i in range(n_iter):
@@ -485,6 +494,7 @@ class SwitchingSSM:
             # persist for more than one observation, without forbidding switches.
             counts += 1e-3
             counts += float(sticky_prior_strength) * np.eye(self.n_regimes)
+            counts += float(transition_prior_strength) * transition_prior
             row_sums = counts.sum(axis=1, keepdims=True)
             self.transition_matrix = counts / np.maximum(row_sums, 1e-12)
 
