@@ -24,13 +24,6 @@ RESULT_ROOT = ROOT / "platform" / "results"
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 RESULT_ROOT.mkdir(parents=True, exist_ok=True)
 
-REGIME_NAMES = {
-    0: "Normal",
-    1: "Reconnaissance",
-    2: "Intrusion",
-    3: "DoS / DDoS",
-    4: "Exfiltration",
-}
 REGIME_COLORS = ["#47d7ac", "#f5bd55", "#ff8a65", "#ff5f72", "#a78bfa"]
 
 app = FastAPI(
@@ -136,7 +129,7 @@ def prepare_dataset(name: str, sample_size: int = 50000):
 
 
 @app.post("/api/analyse/{name}")
-def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: int = 10, window_size: int = 100, em_iterations: int = 8):
+def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: int = 10, em_iterations: int = 8):
     folder = dataset_dir(name)
     x_path, y_path = folder / "features.npy", folder / "labels.npy"
     if not x_path.exists() or not y_path.exists():
@@ -152,8 +145,8 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         if len(np.unique(y)) < 2:
             raise ValueError("At least two label classes are required.")
         X_train, X_test, y_train, y_test = temporal_train_test_split(X, y, test_ratio=0.2)
-        if len(X_test) < window_size or len(X_train) < window_size:
-            raise ValueError("Not enough samples for the selected window size.")
+        if len(X_test) < 2 or len(X_train) < 2:
+            raise ValueError("The train and test splits must each contain at least two samples.")
 
         scaler = RobustScaler()
         X_train_scaled = scaler.fit_transform(X_train)
@@ -200,7 +193,6 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "regimes": int(regimes),
             "state_dim": int(state_dim),
             "obs_dim": int(components),
-            "window_size": int(window_size),
             "em_iterations": int(em_iterations),
             "adjusted_rand_index": ari,
             "normalized_mutual_info": nmi,
@@ -208,14 +200,14 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "log_likelihood": float(result.log_likelihood / max(1, length)),
             "ground_truth_classes": sorted(int(v) for v in np.unique(actual)),
             "latent_regime_ids": sorted(int(v) for v in np.unique(predicted)),
-            "regime_names": {str(i): REGIME_NAMES.get(i, f"Latent regime {i}") for i in range(regimes)},
+            "regime_names": {str(i): f"Latent regime {i}" for i in range(regimes)},
             "regime_probabilities": regime_probs[::sample_step].tolist(),
             "predicted_regimes": predicted[::sample_step].tolist(),
             "true_regimes": actual[::sample_step].tolist(),
             "regime_uncertainty": regime_uncertainty[::sample_step].tolist(),
             "hidden_state": hidden_states[::sample_step, :min(3, hidden_states.shape[1])].tolist(),
             "training_log_likelihood": [float(v) for v in history],
-            "regime_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
+            "ground_truth_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
             "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The current EM implementation updates transition probabilities but does not fully learn all state-space parameters; it is an exploratory baseline, not a validated production detector. Model fitting uses at most the first 5,000 training observations for runtime control. Latent-state uncertainty is not an attack probability.",
         }
         latest_result(name).write_text(json.dumps(result_payload, default=safe_json, indent=2), encoding="utf-8")
