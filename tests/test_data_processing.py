@@ -22,6 +22,7 @@ from src.data_processing.feature_engineering import (
 from src.data_processing.dataset_loader import (
     save_processed,
     load_processed,
+    load_unswnb15,
 )
 
 
@@ -211,6 +212,17 @@ def test_save_load_roundtrip():
     print("  [PASS] test_save_load_roundtrip")
 
 
+def test_unsw_loader_preserves_sorted_file_order_without_sampling():
+    """sample_size=0 keeps all rows in deterministic filename order."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "UNSW-NB15_2.csv").write_text("dur,attack_cat\n2.0,Normal\n", encoding="utf-8")
+        (root / "UNSW-NB15_1.csv").write_text("dur,attack_cat\n1.0,Normal\n", encoding="utf-8")
+        X, y = load_unswnb15(str(root), sample_size=0)
+    assert X.shape == (2, 1)
+    np.testing.assert_array_equal(X[:, 0], np.array([1.0, 2.0], dtype=np.float32))
+    np.testing.assert_array_equal(y, np.array([0, 0], dtype=np.int32))
+
 # ---------------------------------------------------------------------------
 # Run all
 # ---------------------------------------------------------------------------
@@ -236,6 +248,7 @@ ALL_TESTS = [
     test_temporal_split_ordering,
     # save / load
     test_save_load_roundtrip,
+    test_unsw_loader_preserves_sorted_file_order_without_sampling,
 ]
 
 
