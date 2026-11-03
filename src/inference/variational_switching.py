@@ -431,7 +431,7 @@ class SwitchingSSM:
         observations: np.ndarray,
         n_iter: int = 20,
         verbose: bool = True,
-        sticky_prior_strength: float = 2.0,
+        sticky_prior_strength: float = 0.0,
     ) -> List[float]:
         """
         Fit model parameters via EM (Expectation-Maximization).
