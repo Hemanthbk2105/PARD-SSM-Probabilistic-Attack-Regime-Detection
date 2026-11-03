@@ -1,0 +1,59 @@
+name: PARD-SSM platform checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "platform/**"
+      - "src/**"
+      - ".github/workflows/platform-ci.yml"
+  push:
+    branches: ["feat/pard-intelligence-platform"]
+    paths:
+      - "platform/**"
+      - "src/**"
+      - ".github/workflows/platform-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: platform/frontend/package.json
+      - name: Install dependencies
+        run: npm install
+      - name: Build production bundle
+        run: npm run build
+
+  backend:
+    name: Backend syntax and API import
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: platform/backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r platform/backend/requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q platform/backend src
+      - name: Import FastAPI application
+        working-directory: platform/backend
+        run: python -c "from main import app; print(app.title)"
