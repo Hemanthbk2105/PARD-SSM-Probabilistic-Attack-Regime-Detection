@@ -5,6 +5,7 @@ Unit tests for data loading, feature engineering, and preprocessing pipeline.
 """
 
 import numpy as np
+import pandas as pd
 import sys
 import os
 import tempfile
@@ -23,6 +24,7 @@ from src.data_processing.dataset_loader import (
     save_processed,
     load_processed,
     load_unswnb15,
+    _sort_by_capture_time,
 )
 
 
@@ -223,6 +225,11 @@ def test_unsw_loader_preserves_sorted_file_order_without_sampling():
     np.testing.assert_array_equal(X[:, 0], np.array([1.0, 2.0], dtype=np.float32))
     np.testing.assert_array_equal(y, np.array([0, 0], dtype=np.int32))
 
+def test_capture_timestamp_sort_is_stable():
+    frame = pd.DataFrame({"Timestamp": ["2020-01-02 00:00:02", "2020-01-02 00:00:01", "2020-01-02 00:00:01"], "value": [2, 1, 3]})
+    ordered = _sort_by_capture_time(frame, ("Timestamp",))
+    assert ordered["value"].tolist() == [1, 3, 2]
+
 # ---------------------------------------------------------------------------
 # Run all
 # ---------------------------------------------------------------------------
@@ -249,6 +256,7 @@ ALL_TESTS = [
     # save / load
     test_save_load_roundtrip,
     test_unsw_loader_preserves_sorted_file_order_without_sampling,
+    test_capture_timestamp_sort_is_stable,
 ]
 
 
