@@ -34,8 +34,8 @@ REGIME_NAMES = {
 REGIME_COLORS = ["#47d7ac", "#f5bd55", "#ff8a65", "#ff5f72", "#a78bfa"]
 
 app = FastAPI(
-    title="PARD-SSM Intelligence API",
-    description="Research dashboard API for probabilistic attack-regime detection.",
+    title="PARD-SSM Security API",
+    description="Security analytics API for probabilistic attack-regime detection.",
     version="1.0.0",
 )
 app.add_middleware(
@@ -71,7 +71,7 @@ def safe_json(value: Any):
 
 @app.get("/api/health")
 def health():
-    return {"status": "online", "service": "PARD-SSM Intelligence", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "online", "service": "PARD-SSM Security", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/datasets")
