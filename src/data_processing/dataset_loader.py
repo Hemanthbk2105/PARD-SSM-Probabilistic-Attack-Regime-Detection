@@ -14,6 +14,28 @@ import pandas as pd
 from pathlib import Path
 
 
+
+def _sort_by_capture_time(df: pd.DataFrame, timestamp_columns: tuple[str, ...]) -> pd.DataFrame:
+    """Stable-sort rows by the first available capture timestamp column."""
+    timestamp_col = next((name for name in timestamp_columns if name in df.columns), None)
+    if timestamp_col is None:
+        return df
+    values = df[timestamp_col]
+    if timestamp_col.lower() in {"stime", "timestamp_epoch"}:
+        parsed = pd.to_numeric(values, errors="coerce")
+    else:
+        parsed = pd.to_datetime(values, errors="coerce")
+    if parsed.isna().any():
+        raise ValueError(
+            f"Column '{timestamp_col}' contains missing or invalid timestamps; "
+            "cannot safely claim chronological row order."
+        )
+    ordered = df.copy()
+    ordered["_pard_capture_sort_key"] = parsed
+    ordered = ordered.sort_values("_pard_capture_sort_key", kind="stable")
+    return ordered.drop(columns=["_pard_capture_sort_key"])
+
+
 # ---------------------------------------------------------------------------
 # CICIDS 2017
 # ---------------------------------------------------------------------------
@@ -135,6 +157,7 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
         dfs.append(df)
 
     df = pd.concat(dfs, ignore_index=True)
+    df = _sort_by_capture_time(df, ("Timestamp", " Timestamp"))
     print(f"Total rows loaded: {len(df):,}")
 
     # Map labels to regime integers
@@ -227,6 +250,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
             print(f"  Warning: could not load {f.name}: {e}")
 
     df = pd.concat(dfs, ignore_index=True)
+    df = _sort_by_capture_time(df, ("Stime", "timestamp", "Timestamp"))
     print(f"Total rows loaded: {len(df):,}")
 
     # Label column
