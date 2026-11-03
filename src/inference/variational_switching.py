@@ -431,6 +431,7 @@ class SwitchingSSM:
         observations: np.ndarray,
         n_iter: int = 20,
         verbose: bool = True,
+        sticky_prior_strength: float = 2.0,
     ) -> List[float]:
         """
         Fit model parameters via EM (Expectation-Maximization).
@@ -453,6 +454,8 @@ class SwitchingSSM:
         observations = np.asarray(observations, dtype=np.float64)
         if not isinstance(n_iter, (int, np.integer)) or n_iter < 1:
             raise ValueError("n_iter must be a positive integer.")
+        if not np.isfinite(sticky_prior_strength) or sticky_prior_strength < 0:
+            raise ValueError("sticky_prior_strength must be finite and non-negative.")
         if observations.ndim != 2 or observations.shape[1] != self.obs_dim:
             raise ValueError(f"observations must have shape (T, {self.obs_dim}).")
         if observations.shape[0] < 2 or not np.isfinite(observations).all():
@@ -481,7 +484,7 @@ class SwitchingSSM:
             # A weak sticky Dirichlet prior expresses that regimes usually
             # persist for more than one observation, without forbidding switches.
             counts += 1e-3
-            counts += 2.0 * np.eye(self.n_regimes)
+            counts += float(sticky_prior_strength) * np.eye(self.n_regimes)
             row_sums = counts.sum(axis=1, keepdims=True)
             self.transition_matrix = counts / np.maximum(row_sums, 1e-12)
 
