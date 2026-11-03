@@ -28,6 +28,7 @@ def test_switching_ssm_output_shapes():
     assert result.regime_probs.shape == (T, K)
     assert result.filtered_means.shape == (T, state_dim)
     assert result.viterbi_path.shape == (T,)
+    assert result.regime_filtered_means.shape == (T, K, state_dim)
 
 
 def test_regime_probs_sum_to_one():
@@ -93,14 +94,19 @@ def test_reported_regime_path_matches_posterior_map():
     np.testing.assert_array_equal(result.viterbi_path, np.argmax(result.regime_probs, axis=1))
 
 
-def test_fit_does_not_modify_state_space_parameters():
+def test_fit_updates_state_space_parameters_and_keeps_covariances_valid():
     obs = make_synthetic_obs(T=60, obs_dim=3, n_regimes=2)
     model = SwitchingSSM(n_regimes=2, state_dim=2, obs_dim=3)
     before = [(r.A.copy(), r.C.copy(), r.Q.copy(), r.R.copy()) for r in model.regimes]
     model.fit(obs, n_iter=2, verbose=False)
+    changed = False
     for regime, original in zip(model.regimes, before):
         for current, expected in zip((regime.A, regime.C, regime.Q, regime.R), original):
-            np.testing.assert_array_equal(current, expected)
+            changed = changed or not np.allclose(current, expected)
+        for covariance in (regime.Q, regime.R):
+            np.testing.assert_allclose(covariance, covariance.T, atol=1e-8)
+            assert np.linalg.eigvalsh(covariance).min() > 0
+    assert changed, "The approximate M-step should update at least one state-space parameter."
 
 if __name__ == "__main__":
     test_switching_ssm_output_shapes()
@@ -110,5 +116,5 @@ if __name__ == "__main__":
     test_filter_rejects_invalid_observations()
     test_filtered_covariances_are_symmetric_and_positive_semidefinite()
     test_reported_regime_path_matches_posterior_map()
-    test_fit_does_not_modify_state_space_parameters()
+    test_fit_updates_state_space_parameters_and_keeps_covariances_valid()
     print("All Switching SSM tests passed!")
