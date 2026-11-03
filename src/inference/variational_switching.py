@@ -50,6 +50,7 @@ class SwitchingSSMResult:
     viterbi_path: np.ndarray          # (T,) — per-step posterior MAP regime (not Viterbi)
     log_likelihood: float
     predicted_observations: np.ndarray  # (T, obs_dim) — y_{t|t-1}
+    regime_filtered_means: np.ndarray   # (T, K, state_dim) — per-regime filtered states
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,7 @@ class SwitchingSSM:
         filtered_means = np.zeros((T, d))
         filtered_covs = np.zeros((T, d, d))
         predicted_obs = np.zeros((T, obs_dim))
+        regime_filtered_means = np.zeros((T, K, d))
         total_log_lik = 0.0
 
         # --- Initialize ---
@@ -244,6 +246,7 @@ class SwitchingSSM:
                 Pf = 0.5 * (Pf + Pf.T)
                 mu_filt.append(mf)
                 P_filt.append(Pf)
+                regime_filtered_means[t, k] = mf
 
             # --- Collapse mixture (GPB1 approximation for next step) ---
             mu_collapse = sum(regime_prob[k] * mu_filt[k] for k in range(K))
@@ -279,6 +282,7 @@ class SwitchingSSM:
             viterbi_path=viterbi,
             log_likelihood=total_log_lik,
             predicted_observations=predicted_obs,
+            regime_filtered_means=regime_filtered_means,
         )
 
     # ------------------------------------------------------------------
@@ -336,8 +340,69 @@ class SwitchingSSM:
         return path
 
     # ------------------------------------------------------------------
-    # EM learning (simplified M-step parameter update)
+    # Approximate generalized-EM parameter updates
     # ------------------------------------------------------------------
+
+
+    @staticmethod
+    def _positive_definite(matrix: np.ndarray, floor: float = 1e-5) -> np.ndarray:
+        """Symmetrize a covariance estimate and floor its eigenvalues."""
+        matrix = 0.5 * (matrix + matrix.T)
+        values, vectors = np.linalg.eigh(matrix)
+        return (vectors * np.maximum(values, floor)) @ vectors.T
+
+    @staticmethod
+    def _weighted_ridge(design: np.ndarray, target: np.ndarray,
+                        weights: np.ndarray, ridge: float = 1e-3) -> np.ndarray:
+        """Weighted least-squares map from design rows to target rows."""
+        root_w = np.sqrt(np.maximum(weights, 0.0))[:, None]
+        weighted_design = design * root_w
+        weighted_target = target * root_w
+        lhs = weighted_design.T @ weighted_design
+        rhs = weighted_design.T @ weighted_target
+        return np.linalg.solve(lhs + ridge * np.eye(lhs.shape[0]), rhs).T
+
+    def _update_state_space(self, observations: np.ndarray,
+                            result: SwitchingSSMResult, damping: float = 0.25) -> None:
+        """Regularized responsibility-weighted approximate generalized-EM update.
+
+        Uses filtered means and marginal regime responsibilities, not smoothed
+        moments or pairwise transition posteriors. This is not exact EM.
+        """
+        states = result.regime_filtered_means
+        responsibilities = result.regime_probs
+        for k, regime in enumerate(self.regimes):
+            weights = responsibilities[:, k]
+            if weights.sum() < max(5.0, self.state_dim + 1.0):
+                continue
+
+            x_prev, x_now = states[:-1, k], states[1:, k]
+            transition_weights = np.minimum(weights[:-1], weights[1:])
+            if transition_weights.sum() >= max(5.0, self.state_dim + 1.0):
+                a_est = self._weighted_ridge(x_prev, x_now, transition_weights)
+                radius = float(np.max(np.abs(np.linalg.eigvals(a_est))))
+                if radius > 0.995:
+                    a_est *= 0.995 / radius
+                regime.A = (1.0 - damping) * regime.A + damping * a_est
+                residual_x = x_now - x_prev @ regime.A.T
+                weighted_x = residual_x * np.sqrt(transition_weights)[:, None]
+                q_est = self._positive_definite(
+                    weighted_x.T @ weighted_x / transition_weights.sum()
+                )
+                regime.Q = self._positive_definite(
+                    (1.0 - damping) * regime.Q + damping * q_est
+                )
+
+            c_est = self._weighted_ridge(states[:, k], observations, weights)
+            regime.C = (1.0 - damping) * regime.C + damping * c_est
+            residual_y = observations - states[:, k] @ regime.C.T
+            weighted_y = residual_y * np.sqrt(weights)[:, None]
+            r_est = self._positive_definite(weighted_y.T @ weighted_y / weights.sum())
+            regime.R = self._positive_definite(
+                (1.0 - damping) * regime.R + damping * r_est
+            )
+
+
 
     def fit(
         self,
@@ -348,9 +413,10 @@ class SwitchingSSM:
         """
         Fit model parameters via EM (Expectation-Maximization).
 
-        E-step: run the approximate switching filter to get regime responsibilities
-        M-step: update only the Markov transition matrix from approximate
-                pairwise soft counts. A, C, Q, and R are NOT learned here.
+        E-step: run the approximate switching filter.
+        M-step: update transition probabilities and apply regularized,
+                responsibility-weighted regression updates to A, C, Q, and R.
+                This is approximate generalized EM, not exact switching-Kalman EM.
 
         Parameters
         ----------
@@ -381,7 +447,10 @@ class SwitchingSSM:
             if verbose:
                 print(f"  EM iter {i+1:3d} | log-likelihood: {ll:.4f}")
 
-            # M-step: update transition matrix from soft counts
+            # Approximate M-step for regime-conditioned state-space parameters.
+            self._update_state_space(observations, result)
+
+            # Update transition matrix from marginal soft counts.
             probs = result.regime_probs  # (T, K)
             T = probs.shape[0]
             counts = np.zeros((self.n_regimes, self.n_regimes))
