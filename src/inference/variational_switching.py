@@ -154,6 +154,18 @@ class SwitchingSSM:
         -------
         SwitchingSSMResult
         """
+        observations = np.asarray(observations, dtype=np.float64)
+        if observations.ndim != 2:
+            raise ValueError("observations must be a 2D array with shape (T, obs_dim).")
+        if observations.shape[0] == 0:
+            raise ValueError("observations must contain at least one time step.")
+        if observations.shape[1] != self.obs_dim:
+            raise ValueError(
+                f"Expected {self.obs_dim} observation features, got {observations.shape[1]}."
+            )
+        if not np.isfinite(observations).all():
+            raise ValueError("observations must contain only finite values.")
+
         T, obs_dim = observations.shape
         K = self.n_regimes
         d = self.state_dim
@@ -195,10 +207,15 @@ class SwitchingSSM:
                 innov = y_t - r.C @ mu_pred[k]
                 S = r.C @ P_pred[k] @ r.C.T + r.R
                 sign, logdet = np.linalg.slogdet(S)
+                if sign <= 0 or not np.isfinite(logdet):
+                    raise np.linalg.LinAlgError(
+                        f"Regime {k} innovation covariance is not positive definite."
+                    )
+                solved_innov = np.linalg.solve(S, innov)
                 log_liks[k] = -0.5 * (
                     obs_dim * np.log(2 * np.pi)
                     + logdet
-                    + innov @ np.linalg.solve(S, innov)
+                    + innov @ solved_innov
                 )
 
             # --- Update regime probabilities ---
@@ -217,9 +234,11 @@ class SwitchingSSM:
                 r = self.regimes[k]
                 innov = y_t - r.C @ mu_pred[k]
                 S = r.C @ P_pred[k] @ r.C.T + r.R
-                Kgain = P_pred[k] @ r.C.T @ np.linalg.inv(S)
+                Kgain = np.linalg.solve(S, r.C @ P_pred[k]).T
                 mf = mu_pred[k] + Kgain @ innov
-                Pf = (np.eye(d) - Kgain @ r.C) @ P_pred[k]
+                # Joseph form is more stable and preserves covariance symmetry.
+                residual = np.eye(d) - Kgain @ r.C
+                Pf = residual @ P_pred[k] @ residual.T + Kgain @ r.R @ Kgain.T
                 Pf = 0.5 * (Pf + Pf.T)
                 mu_filt.append(mf)
                 P_filt.append(Pf)
