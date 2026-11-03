@@ -65,7 +65,9 @@ jobs:
         run: |
           python -m pip install pytest
           python -m pytest -q
-      - name: Validate chronological benchmark CLI\n        run: python experiments/chronological_network_benchmark.py --help\n      - name: Run synthetic parameter recovery experiment
+      - name: Validate chronological benchmark CLI
+        run: python experiments/chronological_network_benchmark.py --help
+      - name: Run synthetic parameter recovery experiment
         run: python experiments/synthetic_parameter_recovery.py
       - name: Run multi-regime baseline comparison
         run: python experiments/multiregime_baseline_comparison.py
