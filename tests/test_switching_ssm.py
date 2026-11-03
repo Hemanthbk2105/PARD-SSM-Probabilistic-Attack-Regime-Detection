@@ -157,6 +157,24 @@ def test_known_single_regime_dynamics_synthetic_experiment():
     assert true_r.shape == model.regimes[0].R.shape
     assert before.regime_probs.shape == after.regime_probs.shape
 
+
+def test_regime_observation_offset_is_used_in_predictions():
+    model = SwitchingSSM(n_regimes=1, state_dim=2, obs_dim=3)
+    offset = np.array([1.2, -0.7, 0.4])
+    model.set_regime_params(0, C=np.zeros((3, 2)), b=offset)
+    observations = np.tile(offset, (8, 1))
+    result = model.filter(observations)
+    np.testing.assert_allclose(result.predicted_observations, offset[None, :], atol=1e-10)
+
+
+def test_fit_can_update_regime_observation_offsets():
+    obs = make_synthetic_obs(T=80, obs_dim=3, n_regimes=2)
+    model = SwitchingSSM(n_regimes=2, state_dim=2, obs_dim=3)
+    before = [regime.b.copy() for regime in model.regimes]
+    model.fit(obs, n_iter=2, verbose=False)
+    assert any(not np.allclose(regime.b, old)
+               for regime, old in zip(model.regimes, before))
+
 if __name__ == "__main__":
     test_switching_ssm_output_shapes()
     test_regime_probs_sum_to_one()
@@ -167,4 +185,6 @@ if __name__ == "__main__":
     test_reported_regime_path_matches_posterior_map()
     test_fit_updates_state_space_parameters_and_keeps_covariances_valid()
     test_known_single_regime_dynamics_synthetic_experiment()
+    test_regime_observation_offset_is_used_in_predictions()
+    test_fit_can_update_regime_observation_offsets()
     print("All Switching SSM tests passed!")
