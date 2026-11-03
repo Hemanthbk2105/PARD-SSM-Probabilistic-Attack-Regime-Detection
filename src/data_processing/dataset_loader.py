@@ -110,7 +110,7 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     data_dir : str
         Path to directory containing CICIDS2017 CSV files.
     sample_size : int
-        Number of samples to load (for memory management).
+        Number of samples to load. Use 0 or None to keep all rows in file order. Use 0 or None to keep all rows in file order.
 
     Returns
     -------
@@ -118,7 +118,8 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     y : np.ndarray  shape (N,)    — regime labels (int)
     """
     data_dir = Path(data_dir)
-    csv_files = list(data_dir.glob("*.csv"))
+    # Use deterministic filename order; verify capture timestamps before treating this as chronological.
+    csv_files = sorted(data_dir.glob("*.csv"), key=lambda path: path.name.lower())
 
     if not csv_files:
         raise FileNotFoundError(
@@ -148,7 +149,7 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
     # Sample
-    if sample_size and len(df) > sample_size:
+    if sample_size is not None and sample_size > 0 and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=42)
 
     X = df[available_cols].values.astype(np.float32)
@@ -208,7 +209,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
     y : np.ndarray  shape (N,)
     """
     data_dir = Path(data_dir)
-    csv_files = list(data_dir.glob("UNSW*.csv")) or list(data_dir.glob("*.csv"))
+    csv_files = sorted(list(data_dir.glob("UNSW*.csv")) or list(data_dir.glob("*.csv")), key=lambda path: path.name.lower())
 
     if not csv_files:
         raise FileNotFoundError(
