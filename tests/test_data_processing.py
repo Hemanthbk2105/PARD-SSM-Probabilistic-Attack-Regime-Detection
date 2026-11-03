@@ -230,6 +230,45 @@ def test_capture_timestamp_sort_is_stable():
     ordered = _sort_by_capture_time(frame, ("Timestamp",))
     assert ordered["value"].tolist() == [1, 3, 2]
 
+
+def test_cicids_loader_normalizes_features_and_web_attack_labels():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        frame = pd.DataFrame({
+            "Timestamp": ["2017-07-06 12:00:02", "2017-07-06 12:00:01"],
+            "Destination Port": [443, 80],
+            "Flow Duration": [20, 10],
+            "Label": ["BENIGN", "Web Attack \\x96 Brute Force"],
+        })
+        frame.to_csv(root / "Thursday.csv", index=False)
+        X, y = __import__(
+            "src.data_processing.dataset_loader",
+            fromlist=["load_cicids2017"]
+        ).load_cicids2017(str(root), sample_size=0)
+
+    assert X.shape == (2, 2)
+    # Timestamp sorting puts the web attack row first; it must remain regime 2.
+    np.testing.assert_array_equal(y, np.array([2, 0], dtype=np.int32))
+    np.testing.assert_array_equal(X[:, 0], np.array([80, 443], dtype=np.float32))
+
+
+def test_cicids_loader_rejects_unknown_labels():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        frame = pd.DataFrame({
+            "Timestamp": ["2017-07-06 12:00:01"],
+            "Destination Port": [443],
+            "Label": ["UnexpectedAttack"],
+        })
+        frame.to_csv(root / "Thursday.csv", index=False)
+        from src.data_processing.dataset_loader import load_cicids2017
+        try:
+            load_cicids2017(str(root), sample_size=0)
+        except ValueError as exc:
+            assert "Unmapped CICIDS2017 labels" in str(exc)
+        else:
+            raise AssertionError("Unknown labels must not silently map to BENIGN")
+
 # ---------------------------------------------------------------------------
 # Run all
 # ---------------------------------------------------------------------------
@@ -257,6 +296,8 @@ ALL_TESTS = [
     test_save_load_roundtrip,
     test_unsw_loader_preserves_sorted_file_order_without_sampling,
     test_capture_timestamp_sort_is_stable,
+    test_cicids_loader_normalizes_features_and_web_attack_labels,
+    test_cicids_loader_rejects_unknown_labels,
 ]
 
 
