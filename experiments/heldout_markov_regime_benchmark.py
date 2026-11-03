@@ -117,6 +117,17 @@ def score(y_true, y_pred):
     }
 
 
+def causal_probability_smoothing(probabilities: np.ndarray, window: int) -> np.ndarray:
+    """Average only current and past posterior probabilities; no future leakage."""
+    smoothed = np.empty_like(probabilities)
+    cumulative = np.vstack([np.zeros((1, probabilities.shape[1])),
+                            np.cumsum(probabilities, axis=0)])
+    for t in range(len(probabilities)):
+        start = max(0, t - window + 1)
+        smoothed[t] = (cumulative[t + 1] - cumulative[start]) / (t - start + 1)
+    return smoothed
+
+
 def run_seed(seed: int):
     X, y, true_transition = generate_markov_sequence(seed=seed)
     split = int(0.7 * len(X))
@@ -138,7 +149,16 @@ def run_seed(seed: int):
     for k in range(3):
         model.set_regime_params(k, b=initializer.cluster_centers_[k])
     model.fit(train, n_iter=5, verbose=False)
-    pard_prediction = np.argmax(model.filter(test).regime_probs, axis=1)
+    pard_probabilities = model.filter(test).regime_probs
+    pard_prediction = np.argmax(pard_probabilities, axis=1)
+    # Fixed causal smoothing windows are diagnostic post-processing choices,
+    # not model retraining. They use no future test observations.
+    smoothed_predictions = {
+        f"pard_ssm_causal_posterior_window_{window}": np.argmax(
+            causal_probability_smoothing(pard_probabilities, window), axis=1
+        )
+        for window in (5, 11, 21)
+    }
 
     gmm = GaussianMixture(n_components=3, covariance_type="full",
                           random_state=seed, n_init=5)
@@ -157,7 +177,11 @@ def run_seed(seed: int):
         "true_test_regime_switches": int(np.count_nonzero(np.diff(y_test))),
         "true_transition_matrix": true_transition.tolist(),
         "metrics": {
-            "pard_ssm": score(y_test, pard_prediction),
+            "pard_ssm_raw": score(y_test, pard_prediction),
+            **{
+                name: score(y_test, prediction)
+                for name, prediction in smoothed_predictions.items()
+            },
             "gaussian_mixture": score(y_test, gmm_prediction),
             "gaussian_hmm": score(y_test, hmm_prediction),
         },
@@ -167,7 +191,15 @@ def run_seed(seed: int):
 
 def aggregate(rows):
     result = {}
-    for method in ("pard_ssm", "gaussian_mixture", "gaussian_hmm"):
+    methods = (
+        "pard_ssm_raw",
+        "pard_ssm_causal_posterior_window_5",
+        "pard_ssm_causal_posterior_window_11",
+        "pard_ssm_causal_posterior_window_21",
+        "gaussian_mixture",
+        "gaussian_hmm",
+    )
+    for method in methods:
         result[method] = {}
         for metric in ("ari", "nmi"):
             values = [row["metrics"][method][metric] for row in rows]
@@ -202,6 +234,8 @@ def main():
             "ARI/NMI are permutation-invariant but do not measure operational alert quality.",
             "Five seeds are an initial stability check, not a definitive statistical study.",
             "PARD-SSM uses approximate GPB1 filtering and approximate generalized-EM updates.",
+            "Causal posterior smoothing windows are fixed diagnostics and use no future test data.",
+            "Smoothing results are post-processing comparisons, not a learned model improvement.",
         ],
     }
     output = Path("heldout_markov_regime_benchmark.json")
