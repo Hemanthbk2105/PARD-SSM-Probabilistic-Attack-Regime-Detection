@@ -1,6 +1,6 @@
 # PARD-SSM Intelligence Platform
 
-A separate React + FastAPI research interface for the existing PARD-SSM repository. The original model code remains in place; this platform calls the existing dataset loaders, temporal split helper and SwitchingSSM implementation.
+A React + FastAPI security operations interface for the existing PARD-SSM repository. The original model code remains in place; this platform calls the existing dataset loaders, temporal split helper and SwitchingSSM implementation.
 
 ## Architecture
 
@@ -43,12 +43,12 @@ VITE_API_URL=https://your-api-host.example
 
 ## First experiment
 
-1. Open Dataset Studio.
+1. Open Dataset Management.
 2. Select CICIDS2017 or UNSW-NB15 in the top selector.
 3. Upload the extracted CSV file(s) for that dataset.
 4. Click **Prepare dataset**. The platform uses the repository's existing \`src/data_processing/dataset_loader.py\`.
-5. Open Model Laboratory and run the experiment.
-6. Review the actual output in Command Center, Threat Intelligence, Regime Explorer and Research Reports.
+5. Open Model Configuration and run the experiment.
+6. Review the actual output in Command Center, Threat Intelligence, Regime Explorer and Security Reports.
 
 ## API
 
@@ -60,7 +60,7 @@ VITE_API_URL=https://your-api-host.example
 - \`GET /api/results/{dataset}\`
 - \`GET /api/reports/{dataset}\`
 
-## Research integrity notes
+## Model transparency and evaluation notes
 
 - No fabricated or hard-coded evaluation metrics are shown. Empty states remain until a real backend experiment is available.
 - The current repository loaders randomly sample rows before splitting. The dashboard explicitly reports this; do not describe those runs as strict chronological holdouts.
