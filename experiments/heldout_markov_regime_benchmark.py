@@ -148,7 +148,11 @@ def run_seed(seed: int, sticky_prior_strength: float = 2.0, transition_prior_str
     model.initial_regime_probs = np.full(3, 1 / 3)
     for k in range(3):
         model.set_regime_params(k, b=initializer.cluster_centers_[k])
-    model.fit(train, n_iter=5, verbose=False, sticky_prior_strength=sticky_prior_strength,\n              transition_prior_strength=transition_prior_strength)
+    model.fit(
+        train, n_iter=5, verbose=False,
+        sticky_prior_strength=sticky_prior_strength,
+        transition_prior_strength=transition_prior_strength,
+    )
     pard_probabilities = model.filter(test).regime_probs
     pard_prediction = np.argmax(pard_probabilities, axis=1)
     # Fixed causal smoothing windows are diagnostic post-processing choices,
