@@ -33,7 +33,7 @@ data/raw/cicids2017/
 ```bash
 python src/data_processing/dataset_loader.py --dataset cicids2017 \
     --input data/raw/cicids2017/ \
-    --output data/processed/
+    --output data/processed/ --sample 0
 ```
 
 ---
@@ -61,7 +61,7 @@ data/raw/unswnb15/
 ```bash
 python src/data_processing/dataset_loader.py --dataset unswnb15 \
     --input data/raw/unswnb15/ \
-    --output data/processed/
+    --output data/processed/ --sample 0
 ```
 
 ---
@@ -93,3 +93,8 @@ python experiments/run_switching.py \
     --labels data/processed/synthetic_labels.npy \
     --regimes 3
 ```
+
+
+## Preserving rows for temporal evaluation
+
+The loaders concatenate CSV files in sorted filename order. Set `--sample 0` to disable random sampling and retain all rows in that deterministic order. This does not by itself prove that the result is chronological: check the dataset release's capture schedule and timestamp ordering before using a temporal train/test split.
