@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import shutil
@@ -33,7 +33,11 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://young-tree-be22.hemanthbk2105.workers.dev",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -265,3 +269,4 @@ def download_report(name: str):
     if not path.exists():
         raise HTTPException(404, "No report is available yet.")
     return FileResponse(path, media_type="application/json", filename=f"pard-ssm-{name}-report.json")
+
