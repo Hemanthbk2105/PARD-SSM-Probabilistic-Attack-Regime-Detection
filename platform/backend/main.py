@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,12 +23,13 @@ RESULT_ROOT = ROOT / "platform" / "results"
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 RESULT_ROOT.mkdir(parents=True, exist_ok=True)
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024  # 10 GiB per CSV file
 REGIME_COLORS = ["#47d7ac", "#f5bd55", "#ff8a65", "#ff5f72", "#a78bfa"]
 
 app = FastAPI(
     title="PARD-SSM Security API",
     description="Security analytics API for probabilistic attack-regime detection.",
-    version="1.0.0",
+    version="1.1.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -64,7 +64,11 @@ def safe_json(value: Any):
 
 @app.get("/api/health")
 def health():
-    return {"status": "online", "service": "PARD-SSM Security", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "online",
+        "service": "PARD-SSM Security",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/datasets")
@@ -98,9 +102,22 @@ async def upload_dataset(name: str, files: list[UploadFile] = File(...)):
         if not filename.lower().endswith(".csv"):
             raise HTTPException(400, f"{filename or 'File'} is not a CSV.")
         destination = folder / filename
-        with destination.open("wb") as target:
-            shutil.copyfileobj(uploaded.file, target)
-        saved.append(filename)
+        temporary = destination.with_suffix(destination.suffix + ".uploading")
+        total = 0
+        try:
+            with temporary.open("wb") as target:
+                while chunk := await uploaded.read(8 * 1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, f"{filename} exceeds the 10 GiB per-file limit.")
+                    target.write(chunk)
+            temporary.replace(destination)
+            saved.append({"name": filename, "size_bytes": total})
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        finally:
+            await uploaded.close()
     return {"message": f"Uploaded {len(saved)} file(s).", "files": saved}
 
 
@@ -109,20 +126,36 @@ def prepare_dataset(name: str, sample_size: int = 50000):
     folder = dataset_dir(name)
     if not list(folder.glob("*.csv")):
         raise HTTPException(400, "Upload the dataset CSV files first.")
+    if sample_size < 0:
+        raise HTTPException(400, "sample_size must be zero (all rows) or a positive integer.")
     try:
         from src.data_processing.dataset_loader import load_cicids2017, load_unswnb15
+
         loader = load_cicids2017 if name == "cicids2017" else load_unswnb15
-        X, y = loader(str(folder), sample_size=sample_size)
-        if X.ndim != 2 or len(X) != len(y) or len(X) < 120:
+        # Load in capture-time order without the loader's random row sampler.
+        X, y = loader(str(folder), sample_size=0)
+        total_rows = len(X)
+        if X.ndim != 2 or total_rows != len(y) or total_rows < 120:
             raise ValueError("The prepared dataset must contain at least 120 matching rows.")
+
+        # If a runtime cap is selected, take evenly spaced positions. This keeps
+        # the capture order intact, unlike random sampling before a time split.
+        if sample_size and total_rows > sample_size:
+            selected = np.linspace(0, total_rows - 1, num=sample_size, dtype=np.int64)
+            X, y = X[selected], y[selected]
+
+        if not np.isfinite(X).all():
+            raise ValueError("Prepared features contain NaN or infinite values.")
         np.save(folder / "features.npy", X.astype(np.float32))
         np.save(folder / "labels.npy", y.astype(np.int32))
         return {
             "message": "Dataset prepared successfully.",
+            "source_rows": int(total_rows),
             "samples": int(len(X)),
             "features": int(X.shape[1]),
+            "sampling": "all_rows" if sample_size == 0 or total_rows <= sample_size else "evenly_spaced_chronological",
             "regime_distribution": {str(int(k)): int((y == k).sum()) for k in np.unique(y)},
-            "note": "The repository's dataset loader samples rows randomly (seed 42). This is not a chronological capture-order evaluation.",
+            "note": "CSV rows are sorted by capture timestamp by the repository loader. Any sample cap uses evenly spaced row positions to preserve order. The holdout split is chronological by row order; verify source timestamps and session boundaries before interpreting it as a cross-session evaluation.",
         }
     except Exception as exc:
         raise HTTPException(422, f"Dataset preparation failed: {exc}") from exc
@@ -136,6 +169,8 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         raise HTTPException(400, "Prepare the dataset before running an experiment.")
     if not 2 <= regimes <= 5 or not 2 <= obs_dim <= 20 or not 2 <= state_dim <= 20:
         raise HTTPException(400, "Model dimensions are outside supported limits.")
+    if not 1 <= em_iterations <= 30:
+        raise HTTPException(400, "EM iterations must be between 1 and 30.")
     try:
         from src.data_processing.feature_engineering import temporal_train_test_split
         from src.inference.variational_switching import SwitchingSSM
@@ -156,20 +191,20 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
         train_obs = pca.fit_transform(X_train_scaled)
         test_obs = pca.transform(X_test_scaled)
 
-        # Fit and evaluate continuous held-out sequences. Do not restart the
-        # latent state at every arbitrary UI window boundary.
         model = SwitchingSSM(n_regimes=regimes, state_dim=state_dim, obs_dim=components)
+        # Bound EM fitting cost, then replay the complete training sequence with
+        # the fitted parameters to obtain the correct causal state for test time.
         training_steps = min(len(train_obs), 5000)
         history = model.fit(train_obs[:training_steps], n_iter=em_iterations, verbose=False)
-        result = model.filter(test_obs)
+        train_filter = model.filter(train_obs)
+        result = model.filter(test_obs, initial_state=train_filter.final_state)
+
         regime_probs = result.regime_probs
-        # Use the filtered posterior MAP state; the model's current Viterbi
-        # helper is a simplified decoder and is not used for reported metrics.
         predicted = np.argmax(regime_probs, axis=1)
         actual = y_test[:len(predicted)]
         hidden_states = result.filtered_means
         predicted_observations = result.predicted_observations
-        length = min(len(actual), len(predicted), len(regime_probs))
+        length = min(len(actual), len(predicted), len(regime_probs), len(predicted_observations))
         actual, predicted = actual[:length], predicted[:length]
         regime_probs, hidden_states = regime_probs[:length], hidden_states[:length]
         predicted_observations = predicted_observations[:length]
@@ -177,8 +212,6 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
 
         ari = float(adjusted_rand_score(actual, predicted))
         nmi = float(normalized_mutual_info_score(actual, predicted))
-        # Latent states have no fixed semantic meaning. Show uncertainty,
-        # not an uncalibrated "attack probability" based on state ID zero.
         regime_uncertainty = 1.0 - np.max(regime_probs, axis=1)
         sample_step = max(1, length // 500)
         result_payload = {
@@ -208,7 +241,7 @@ def analyse_dataset(name: str, regimes: int = 4, state_dim: int = 8, obs_dim: in
             "hidden_state": hidden_states[::sample_step, :min(3, hidden_states.shape[1])].tolist(),
             "training_log_likelihood": [float(v) for v in history],
             "ground_truth_distribution": {str(int(k)): int((actual == k).sum()) for k in np.unique(actual)},
-            "evaluation_note": "ARI and NMI compare inferred latent clusters with dataset labels without assuming that latent state IDs match class IDs. The dataset loader randomly samples rows before the holdout split, so this is not a strict chronological evaluation. The current trainer uses an approximate generalized-EM update for transition probabilities and A, C, Q, R based on filtered state means and marginal regime responsibilities; it is not exact switching-Kalman EM and remains an exploratory baseline, not a validated production detector. Model fitting uses at most the first 5,000 training observations for runtime control. Latent-state uncertainty is not an attack probability.",
+            "evaluation_note": "The dataset loader sorts source rows by capture timestamp. If a sample cap is used, evenly spaced row positions preserve that order. The holdout is the final 20% of prepared rows. Confirm timestamp ordering, session boundaries and duplicate-time handling before treating this as a strict temporal benchmark. RobustScaler and PCA are fitted on training rows only. The SSSM is fitted on at most the first 5,000 training observations for runtime control; after fitting, the complete training sequence is filtered to carry its final posterior into the held-out test sequence. ARI and NMI compare inferred latent clusters with dataset labels without assuming state IDs match class IDs. The model uses approximate generalized-EM updates, not exact switching-Kalman EM. Regime uncertainty is not an attack probability. This is an experimental research workflow, not a validated production intrusion detector.",
         }
         latest_result(name).write_text(json.dumps(result_payload, default=safe_json, indent=2), encoding="utf-8")
         return {"message": "Experiment completed.", "result": result_payload}
