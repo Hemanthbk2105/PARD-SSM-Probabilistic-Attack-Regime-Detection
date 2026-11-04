@@ -16,6 +16,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.preprocessing import RobustScaler
 from hmmlearn.hmm import GaussianHMM
+from scipy.special import logsumexp
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -29,6 +30,35 @@ def _format_timestamp(value, dtype):
     if dtype.kind == "M":
         return np.datetime_as_string(value, unit="auto")
     return str(value)
+
+
+def _causal_hmm_predict(hmm, train: np.ndarray, test: np.ndarray) -> np.ndarray:
+    """Predict test regimes with a forward-only HMM filter carried from train.
+
+    The HMM is fitted on train only. Its filtered posterior is propagated through
+    the training sequence, then carried into test one observation at a time.
+    No future test observations are used to decode an earlier test observation.
+    """
+    log_transition = np.log(np.maximum(hmm.transmat_, 1e-300))
+    log_start = np.log(np.maximum(hmm.startprob_, 1e-300))
+
+    train_log_likelihood = hmm._compute_log_likelihood(train)
+    test_log_likelihood = hmm._compute_log_likelihood(test)
+
+    log_alpha = log_start + train_log_likelihood[0]
+    log_alpha -= logsumexp(log_alpha)
+
+    for emission in train_log_likelihood[1:]:
+        log_alpha = logsumexp(log_alpha[:, None] + log_transition, axis=0) + emission
+        log_alpha -= logsumexp(log_alpha)
+
+    predictions = np.empty(len(test), dtype=int)
+    for index, emission in enumerate(test_log_likelihood):
+        log_alpha = logsumexp(log_alpha[:, None] + log_transition, axis=0) + emission
+        log_alpha -= logsumexp(log_alpha)
+        predictions[index] = int(np.argmax(log_alpha))
+
+    return predictions
 
 
 def run(
@@ -142,7 +172,14 @@ def run(
         obs_dim=components,
     )
     model.fit(train, n_iter=em_iters, verbose=False)
-    pard = np.argmax(model.filter(test).regime_probs, axis=1)
+
+    # Re-filter the training segment with the fitted parameters, then carry its
+    # final posterior/state into test. This preserves chronological continuity
+    # without fitting or tuning on test observations.
+    train_filter = model.filter(train)
+    test_filter = model.filter(test, initial_state=train_filter.final_state)
+    pard = np.argmax(test_filter.regime_probs, axis=1)
+    del train_filter
 
     hmm = GaussianHMM(
         n_components=regimes,
@@ -152,7 +189,7 @@ def run(
         min_covar=1e-3,
     )
     hmm.fit(train)
-    hmm_pred = hmm.predict(test)
+    hmm_pred = _causal_hmm_predict(hmm, train, test)
 
     def metrics(pred):
         return {
@@ -163,6 +200,7 @@ def run(
 
     limitations = [
         "PARD-SSM and Gaussian HMM regime IDs are unsupervised; metrics compare clusters with ground-truth labels.",
+        "PARD-SSM and Gaussian HMM are evaluated with causal forward filtering and state carryover from training into test.",
         "RobustScaler and PCA are fitted on training rows only.",
         "Results on CICIDS2017 do not by themselves establish generalization to live network traffic.",
     ]
@@ -182,6 +220,11 @@ def run(
         "split": split_details,
         "preprocessing": (
             "RobustScaler and PCA fitted on training rows only; reused unchanged on test rows"
+        ),
+        "evaluation_protocol": (
+            "Causal filtering: PARD-SSM and Gaussian HMM carry filtered state/posterior "
+            "from the end of training into test; test observations are processed in order "
+            "without using future test observations."
         ),
         "train_regimes": sorted(map(int, train_regimes)),
         "test_regimes": sorted(map(int, test_regimes)),
