@@ -1,0 +1,99 @@
+name: PARD-SSM platform checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "platform/**"
+      - "src/**"
+      - "tests/**"
+      - "experiments/**"
+      - ".github/workflows/platform-ci.yml"
+  push:
+    branches: ["feat/pard-intelligence-platform"]
+    paths:
+      - "platform/**"
+      - "src/**"
+      - "tests/**"
+      - "experiments/**"
+      - ".github/workflows/platform-ci.yml"
+
+concurrency:
+  group: pard-ssm-platform-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Build production bundle
+        run: npm run build
+
+  backend:
+    name: Backend syntax and API import
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: platform/backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r platform/backend/requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q platform/backend src experiments
+      - name: Run unit tests
+        run: |
+          python -m pip install pytest
+          python -m pytest -q
+      - name: Validate chronological benchmark CLI
+        run: python experiments/chronological_network_benchmark.py --help
+      - name: Run synthetic parameter recovery experiment
+        run: python experiments/synthetic_parameter_recovery.py
+      - name: Run multi-regime baseline comparison
+        run: python experiments/multiregime_baseline_comparison.py
+      - name: Run multi-seed transition stability benchmark
+        run: python experiments/multiseed_transition_stability.py
+      - name: Run held-out Markov regime benchmark
+        run: python experiments/heldout_markov_regime_benchmark.py
+      - name: Run sticky-prior sensitivity experiment
+        run: python experiments/sticky_prior_sensitivity.py
+      - name: Run transition-matrix prior sensitivity experiment
+        run: python experiments/transition_prior_sensitivity.py
+      - name: Run train-only PCA initialization ablation
+        run: python experiments/pca_initialization_ablation.py
+      - name: Upload synthetic experiment reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: pard-ssm-synthetic-reports
+          path: |
+            synthetic_parameter_recovery.json
+            multiregime_baseline_comparison.json
+            multiseed_transition_stability.json
+            heldout_markov_regime_benchmark.json
+            sticky_prior_sensitivity.json
+            transition_prior_sensitivity.json
+            pca_initialization_ablation.json
+          if-no-files-found: error
+      - name: Import FastAPI application
+        working-directory: platform/backend
+        run: python -c "from main import app; print(app.title)"

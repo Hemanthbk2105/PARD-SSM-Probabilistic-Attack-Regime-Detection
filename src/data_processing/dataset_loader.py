@@ -14,6 +14,28 @@ import pandas as pd
 from pathlib import Path
 
 
+
+def _sort_by_capture_time(df: pd.DataFrame, timestamp_columns: tuple[str, ...]) -> pd.DataFrame:
+    """Stable-sort rows by the first available capture timestamp column."""
+    timestamp_col = next((name for name in timestamp_columns if name in df.columns), None)
+    if timestamp_col is None:
+        return df
+    values = df[timestamp_col]
+    if timestamp_col.lower() in {"stime", "timestamp_epoch"}:
+        parsed = pd.to_numeric(values, errors="coerce")
+    else:
+        parsed = pd.to_datetime(values, errors="coerce")
+    if parsed.isna().any():
+        raise ValueError(
+            f"Column '{timestamp_col}' contains missing or invalid timestamps; "
+            "cannot safely claim chronological row order."
+        )
+    ordered = df.copy()
+    ordered["_pard_capture_sort_key"] = parsed
+    ordered = ordered.sort_values("_pard_capture_sort_key", kind="stable")
+    return ordered.drop(columns=["_pard_capture_sort_key"])
+
+
 # ---------------------------------------------------------------------------
 # CICIDS 2017
 # ---------------------------------------------------------------------------
@@ -110,7 +132,7 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     data_dir : str
         Path to directory containing CICIDS2017 CSV files.
     sample_size : int
-        Number of samples to load (for memory management).
+        Number of samples to load. Use 0 or None to keep all rows in file order. Use 0 or None to keep all rows in file order.
 
     Returns
     -------
@@ -118,7 +140,8 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     y : np.ndarray  shape (N,)    — regime labels (int)
     """
     data_dir = Path(data_dir)
-    csv_files = list(data_dir.glob("*.csv"))
+    # Use deterministic filename order; verify capture timestamps before treating this as chronological.
+    csv_files = sorted(data_dir.glob("*.csv"), key=lambda path: path.name.lower())
 
     if not csv_files:
         raise FileNotFoundError(
@@ -134,21 +157,38 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
         dfs.append(df)
 
     df = pd.concat(dfs, ignore_index=True)
+    df = _sort_by_capture_time(df, ("Timestamp", " Timestamp"))
     print(f"Total rows loaded: {len(df):,}")
 
-    # Map labels to regime integers
+    # Map labels without silently converting unknown attacks to BENIGN.
     label_col = " Label" if " Label" in df.columns else "Label"
-    df["regime"] = df[label_col].str.strip().map(CICIDS_LABEL_MAP).fillna(0).astype(int)
+    normalized_labels = (
+        df[label_col].astype("string").str.strip()
+        .str.replace(chr(0x96), "–", regex=False)
+        .str.replace(chr(0x0096), "–", regex=False)
+    )
+    mapped_labels = normalized_labels.map(CICIDS_LABEL_MAP)
+    unknown_labels = sorted(normalized_labels[mapped_labels.isna()].dropna().unique().tolist())
+    if unknown_labels:
+        raise ValueError(
+            "Unmapped CICIDS2017 labels found; refusing to treat them as BENIGN: "
+            + ", ".join(repr(value) for value in unknown_labels)
+        )
+    if mapped_labels.isna().any():
+        raise ValueError("CICIDS2017 contains missing labels; inspect the source rows.")
+    df["regime"] = mapped_labels.astype(int)
 
-    # Select feature columns that exist
-    available_cols = [c for c in CICIDS_FEATURE_COLS if c in df.columns]
+    # CSV and Parquet sources may differ in whitespace around column names.
+    # Normalize the configured feature names to match the stripped dataframe columns.
+    feature_candidates = [name.strip() for name in CICIDS_FEATURE_COLS]
+    available_cols = [name for name in feature_candidates if name in df.columns]
     df = df[available_cols + ["regime"]].dropna()
 
     # Replace inf values
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
     # Sample
-    if sample_size and len(df) > sample_size:
+    if sample_size is not None and sample_size > 0 and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=42)
 
     X = df[available_cols].values.astype(np.float32)
@@ -208,7 +248,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
     y : np.ndarray  shape (N,)
     """
     data_dir = Path(data_dir)
-    csv_files = list(data_dir.glob("UNSW*.csv")) or list(data_dir.glob("*.csv"))
+    csv_files = sorted(list(data_dir.glob("UNSW*.csv")) or list(data_dir.glob("*.csv")), key=lambda path: path.name.lower())
 
     if not csv_files:
         raise FileNotFoundError(
@@ -226,6 +266,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
             print(f"  Warning: could not load {f.name}: {e}")
 
     df = pd.concat(dfs, ignore_index=True)
+    df = _sort_by_capture_time(df, ("Stime", "timestamp", "Timestamp"))
     print(f"Total rows loaded: {len(df):,}")
 
     # Label column
@@ -239,7 +280,7 @@ def load_unswnb15(data_dir: str, sample_size: int = 50000) -> tuple:
     df = df[available_cols + ["regime"]].dropna()
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
-    if sample_size and len(df) > sample_size:
+    if sample_size is not None and sample_size > 0 and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=42)
 
     X = df[available_cols].values.astype(np.float32)

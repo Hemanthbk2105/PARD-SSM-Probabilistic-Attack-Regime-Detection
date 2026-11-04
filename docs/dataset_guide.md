@@ -33,7 +33,7 @@ data/raw/cicids2017/
 ```bash
 python src/data_processing/dataset_loader.py --dataset cicids2017 \
     --input data/raw/cicids2017/ \
-    --output data/processed/
+    --output data/processed/ --sample 0
 ```
 
 ---
@@ -61,7 +61,7 @@ data/raw/unswnb15/
 ```bash
 python src/data_processing/dataset_loader.py --dataset unswnb15 \
     --input data/raw/unswnb15/ \
-    --output data/processed/
+    --output data/processed/ --sample 0
 ```
 
 ---
@@ -93,3 +93,23 @@ python experiments/run_switching.py \
     --labels data/processed/synthetic_labels.npy \
     --regimes 3
 ```
+
+
+## Preserving rows for temporal evaluation
+
+The loaders concatenate CSV files in sorted filename order. Set `--sample 0` to disable random sampling and retain all rows in that deterministic order. This does not by itself prove that the result is chronological: check the dataset release's capture schedule and timestamp ordering before using a temporal train/test split.
+
+
+## Leakage-safe chronological benchmark
+
+After creating feature and label arrays with `--sample 0`, verify that the rows are ordered by the capture timestamps and that the same row filtering was applied to both arrays. Then run:
+
+```bash
+python experiments/chronological_network_benchmark.py \
+  --data data/processed/cicids2017_features.npy \\
+  --labels data/processed/cicids2017_labels.npy \\
+  --test-ratio 0.2 \\
+  --output cicids2017_chronological_report.json
+```
+
+The benchmark fits RobustScaler and PCA on the training segment only, then reuses them for the test segment. It compares PARD-SSM with a Gaussian HMM. It requires local dataset arrays and does not run on the synthetic CI data. Review the reported train/test regime lists: if a regime appears only in the test segment, this should be reported as an unseen-regime limitation rather than hidden.
