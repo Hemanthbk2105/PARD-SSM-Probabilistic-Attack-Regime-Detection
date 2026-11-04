@@ -53,6 +53,7 @@ class SwitchingSSMResult:
     predicted_observations: np.ndarray  # (T, obs_dim) — y_{t|t-1}
     regime_filtered_means: np.ndarray   # (T, K, state_dim) — per-regime filtered states
     pairwise_transition_probs: np.ndarray  # (T, K, K) — approximate P(s[t-1], s[t] | y[1:t])
+    final_state: dict  # Filter state for causal continuation into the next sequence chunk
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,11 @@ class SwitchingSSM:
     # Forward filtering (GPB2 approximation)
     # ------------------------------------------------------------------
 
-    def filter(self, observations: np.ndarray) -> SwitchingSSMResult:
+    def filter(
+        self,
+        observations: np.ndarray,
+        initial_state: Optional[dict] = None,
+    ) -> SwitchingSSMResult:
         """
         Run switching Kalman filter on observation sequence.
 
@@ -186,11 +191,33 @@ class SwitchingSSM:
         pairwise_transition_probs = np.zeros((T, K, K))
         total_log_lik = 0.0
 
-        # --- Initialize ---
-        # Per-regime state estimates: mu[k], P[k]
-        mu = [self.mu0[k].copy() for k in range(K)]
-        P = [self.P0[k].copy() for k in range(K)]
-        regime_prob = self.initial_regime_probs.copy()
+        # --- Initialize or continue a causal filtering state ---
+        if initial_state is None:
+            mu = [self.mu0[k].copy() for k in range(K)]
+            P = [self.P0[k].copy() for k in range(K)]
+            regime_prob = self.initial_regime_probs.copy()
+        else:
+            required = {"mu", "P", "regime_probs"}
+            if not isinstance(initial_state, dict) or not required.issubset(initial_state):
+                raise ValueError(
+                    "initial_state must contain 'mu', 'P', and 'regime_probs'."
+                )
+            if len(initial_state["mu"]) != K or len(initial_state["P"]) != K:
+                raise ValueError("initial_state regime count does not match the model.")
+            mu = [np.asarray(value, dtype=np.float64).copy() for value in initial_state["mu"]]
+            P = [np.asarray(value, dtype=np.float64).copy() for value in initial_state["P"]]
+            regime_prob = np.asarray(initial_state["regime_probs"], dtype=np.float64).copy()
+            if any(value.shape != (d,) for value in mu):
+                raise ValueError("Each initial_state mean must have shape (state_dim,).")
+            if any(value.shape != (d, d) for value in P):
+                raise ValueError("Each initial_state covariance must have shape (state_dim, state_dim).")
+            if regime_prob.shape != (K,) or not np.isfinite(regime_prob).all():
+                raise ValueError("initial_state regime_probs must be a finite (n_regimes,) vector.")
+            if any(not np.isfinite(value).all() for value in mu + P):
+                raise ValueError("initial_state means and covariances must be finite.")
+            if np.any(regime_prob < 0) or regime_prob.sum() <= 0:
+                raise ValueError("initial_state regime_probs must be non-negative with positive sum.")
+            regime_prob /= regime_prob.sum()
 
         for t in range(T):
             y_t = observations[t]
@@ -300,6 +327,11 @@ class SwitchingSSM:
             predicted_observations=predicted_obs,
             regime_filtered_means=regime_filtered_means,
             pairwise_transition_probs=pairwise_transition_probs,
+            final_state={
+                "mu": [value.copy() for value in mu],
+                "P": [value.copy() for value in P],
+                "regime_probs": regime_prob.copy(),
+            },
         )
 
     # ------------------------------------------------------------------
