@@ -149,8 +149,8 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
 
     # Normalize punctuation, whitespace and case before mapping labels.
     def normalize_label(value):
-        value = str(value).replace("\\ufeff", "").strip()
-        value = value.replace("\\u2013", "-").replace("\\u2014", "-").replace("\\u2212", "-")
+        value = str(value).replace("\ufeff", "").strip()
+        value = value.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
         return " ".join(value.casefold().split())
 
     normalized_map = {normalize_label(k): v for k, v in CICIDS_LABEL_MAP.items()}
