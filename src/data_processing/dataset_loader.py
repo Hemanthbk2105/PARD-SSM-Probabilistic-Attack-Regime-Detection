@@ -34,6 +34,9 @@ CICIDS_LABEL_MAP = {
     "Infiltration": 4,
     "Bot": 4,
     "DDoS": 3,
+    # Broad category labels are valid attack labels too; never treat them as BENIGN.
+    "DoS": 3,
+    "Web Attack": 2,
 }
 
 # Regime semantic mapping (used in plots and reports)
@@ -136,12 +139,49 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
     df = pd.concat(dfs, ignore_index=True)
     print(f"Total rows loaded: {len(df):,}")
 
-    # Map labels to regime integers
-    label_col = " Label" if " Label" in df.columns else "Label"
-    df["regime"] = df[label_col].str.strip().map(CICIDS_LABEL_MAP).fillna(0).astype(int)
+    # Columns were stripped above, so resolve the label column consistently.
+    label_col = "Label" if "Label" in df.columns else None
+    if label_col is None:
+        raise ValueError(
+            "CICIDS2017 CSV is missing the 'Label' column. "
+            f"Available columns include: {list(df.columns[:12])}"
+        )
 
-    # Select feature columns that exist
-    available_cols = [c for c in CICIDS_FEATURE_COLS if c in df.columns]
+    # Normalize punctuation, whitespace and case before mapping labels.
+    def normalize_label(value):
+        value = str(value).replace("\\ufeff", "").strip()
+        value = value.replace("\\u2013", "-").replace("\\u2014", "-").replace("\\u2212", "-")
+        return " ".join(value.casefold().split())
+
+    normalized_map = {normalize_label(k): v for k, v in CICIDS_LABEL_MAP.items()}
+    normalized_map.update({
+        "web attack - brute force": 2,
+        "web attack - xss": 2,
+        "web attack - sql injection": 2,
+        "dos slowhttptest": 3,
+    })
+    normalized_labels = df[label_col].map(normalize_label)
+    unknown_labels = sorted(set(normalized_labels.dropna()) - set(normalized_map))
+    if unknown_labels:
+        raise ValueError(
+            "Unmapped CICIDS2017 labels found: "
+            + ", ".join(repr(label) for label in unknown_labels)
+            + ". Add an explicit attack-regime mapping; unknown labels are never "
+              "silently converted to BENIGN."
+        )
+    if normalized_labels.isna().any():
+        raise ValueError("CICIDS2017 Label column contains empty values.")
+
+    df["regime"] = normalized_labels.map(normalized_map).astype(int)
+
+    # CICIDS_FEATURE_COLS contains source-header spacing; df columns were stripped.
+    feature_cols = [column.strip() for column in CICIDS_FEATURE_COLS]
+    available_cols = [c for c in feature_cols if c in df.columns]
+    if not available_cols:
+        raise ValueError(
+            "No expected CICIDS2017 feature columns were found. "
+            "Check that you uploaded CICFlowMeter MachineLearningCSV files."
+        )
     df = df[available_cols + ["regime"]].dropna()
 
     # Replace inf values
