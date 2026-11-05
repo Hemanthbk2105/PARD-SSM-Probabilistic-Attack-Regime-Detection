@@ -22,6 +22,7 @@ from src.data_processing.feature_engineering import (
 from src.data_processing.dataset_loader import (
     save_processed,
     load_processed,
+    load_cicids2017,
 )
 
 
@@ -211,6 +212,44 @@ def test_save_load_roundtrip():
     print("  [PASS] test_save_load_roundtrip")
 
 
+
+
+# ---------------------------------------------------------------------------
+# CICIDS2017 label mapping and validation
+# ---------------------------------------------------------------------------
+
+def test_cicids_label_mapping_accepts_known_and_broad_labels():
+    import pandas as pd
+
+    rows = []
+    for label in ["BENIGN", "DDoS", "PortScan", "DoS", "DoS Hulk",
+                  "Web Attack", "Web Attack – Brute Force"]:
+        rows.append({"Flow Duration": 1000, "Total Fwd Packets": 2, "Label": label})
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pd.DataFrame(rows).to_csv(Path(tmpdir) / "small.csv", index=False)
+        X, y = load_cicids2017(tmpdir, sample_size=0)
+
+    assert X.shape[0] == len(rows)
+    assert set(y.tolist()) == {0, 1, 2, 3}
+    print("  [PASS] test_cicids_label_mapping_accepts_known_and_broad_labels")
+
+
+def test_cicids_unknown_label_is_not_silently_benign():
+    import pandas as pd
+    import pytest
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pd.DataFrame([
+            {"Flow Duration": 1000, "Total Fwd Packets": 2, "Label": "BENIGN"},
+            {"Flow Duration": 2000, "Total Fwd Packets": 3, "Label": "Unknown Attack Family"},
+        ]).to_csv(Path(tmpdir) / "small.csv", index=False)
+
+        with pytest.raises(ValueError, match="Unmapped CICIDS2017 labels"):
+            load_cicids2017(tmpdir, sample_size=0)
+    print("  [PASS] test_cicids_unknown_label_is_not_silently_benign")
+
+
 # ---------------------------------------------------------------------------
 # Run all
 # ---------------------------------------------------------------------------
@@ -236,6 +275,9 @@ ALL_TESTS = [
     test_temporal_split_ordering,
     # save / load
     test_save_load_roundtrip,
+    # CICIDS2017 labels
+    test_cicids_label_mapping_accepts_known_and_broad_labels,
+    test_cicids_unknown_label_is_not_silently_benign,
 ]
 
 
