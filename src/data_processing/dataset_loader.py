@@ -149,6 +149,8 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
 
     # Normalize punctuation, whitespace and case before mapping labels.
     def normalize_label(value):
+        if pd.isna(value):
+            return ""
         value = str(value).replace("\ufeff", "").strip()
         value = value.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
         return " ".join(value.casefold().split())
@@ -169,7 +171,7 @@ def load_cicids2017(data_dir: str, sample_size: int = 50000) -> tuple:
             + ". Add an explicit attack-regime mapping; unknown labels are never "
               "silently converted to BENIGN."
         )
-    if normalized_labels.isna().any():
+    if normalized_labels.eq("").any():
         raise ValueError("CICIDS2017 Label column contains empty values.")
 
     df["regime"] = normalized_labels.map(normalized_map).astype(int)
